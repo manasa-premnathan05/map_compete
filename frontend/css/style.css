@@ -1,0 +1,327 @@
+/* Custom CSS for MapCompete - Earthy & Pastel Design System */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Canvas & Surfaces */
+  --color-canvas: #FAF8F5;       /* Warm linen / soft cream */
+  --color-surface: #FFFFFF;      /* Clean ivory white */
+  --color-surface-subtle: #F5F1EA; /* Muted sand surface */
+  --color-surface-hover: #EFE9DF;
+
+  /* Typography Colors */
+  --color-text-title: #2B2824;   /* Deep espresso slate */
+  --color-text-body: #57524A;    /* Warm rich charcoal */
+  --color-text-muted: #6B6459;   /* Soft warm taupe (readable on light surfaces) */
+  --color-text-subtle: #948B7F;
+
+  /* Earthy & Pastel Accents */
+  --color-sage: #5E7E62;         /* Primary brand: Sophisticated sage */
+  --color-sage-hover: #4B684E;
+  --color-sage-pastel: #EBF2EC;  /* Pastel sage tint */
+  --color-sage-border: #C8DBCB;
+
+  --color-terracotta: #C8684C;   /* Warm terracotta clay */
+  --color-terracotta-hover: #B0553B;
+  --color-terracotta-pastel: #FCEFEA;
+  --color-terracotta-border: #F3CEC3;
+
+  --color-amber-soft: #D4A373;   /* Warm caramel / sand */
+  --color-amber-pastel: #FDF6EC;
+  --color-amber-border: #F4DFBF;
+
+  --color-clay-soft: #8C6A58;    /* Muted clay rose */
+  --color-clay-pastel: #F7EFEB;
+  --color-clay-border: #E6D2C8;
+
+  /* Borders & Dividers */
+  --color-border: #E8E2D8;       /* Subtle sand outline */
+  --color-border-light: #F0EAE0;
+
+  /* Typography */
+  --font-header: 'Playfair Display', Georgia, serif;
+  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(60, 48, 36, 0.04), 0 1px 2px rgba(60, 48, 36, 0.02);
+  --shadow-md: 0 4px 14px -2px rgba(60, 48, 36, 0.06), 0 2px 6px -1px rgba(60, 48, 36, 0.04);
+  --shadow-lg: 0 12px 28px -4px rgba(60, 48, 36, 0.08), 0 4px 10px -2px rgba(60, 48, 36, 0.05);
+
+  /* Transitions */
+  --transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Base Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  background-color: var(--color-canvas);
+  overflow-x: hidden;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text-body);
+  background-color: var(--color-canvas);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  width: 100%;
+}
+
+/* Touch & Mobile View Helpers */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  overflow-x: auto;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ensure Leaflet controls and maps don't break flex/grid containers on mobile */
+.leaflet-container {
+  font-family: var(--font-body) !important;
+  border-radius: 0.75rem;
+  z-index: 10;
+  max-width: 100%;
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6, .font-serif {
+  font-family: var(--font-header);
+  color: var(--color-text-title);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+/* Interactive elements */
+button, input, select, textarea {
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--color-sage);
+  outline-offset: 2px;
+}
+
+/* Soft scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D8D0C4;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #BDB4A6;
+}
+
+/* Modern Card Lift */
+.earth-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal), border-color var(--transition-normal);
+}
+
+.earth-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: #D8D0C4;
+  transform: translateY(-2px);
+}
+
+/* Tabs */
+.nav-tab {
+  position: relative;
+  transition: all var(--transition-fast);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  border-radius: 0.5rem;
+}
+
+.nav-tab:hover {
+  color: var(--color-text-title);
+  background-color: rgba(94, 126, 98, 0.08);
+}
+
+.nav-tab.tab-active {
+  color: var(--color-sage-hover);
+  background-color: var(--color-sage-pastel);
+  font-weight: 600;
+}
+
+/* Custom Earthy Badges */
+.badge-sage {
+  background-color: var(--color-sage-pastel);
+  color: var(--color-sage);
+  border: 1px solid var(--color-sage-border);
+}
+
+.badge-terracotta {
+  background-color: var(--color-terracotta-pastel);
+  color: var(--color-terracotta);
+  border: 1px solid var(--color-terracotta-border);
+}
+
+.badge-amber {
+  background-color: var(--color-amber-pastel);
+  color: #A66E20;
+  border: 1px solid var(--color-amber-border);
+}
+
+.badge-clay {
+  background-color: var(--color-clay-pastel);
+  color: var(--color-clay-soft);
+  border: 1px solid var(--color-clay-border);
+}
+
+.badge-sand {
+  background-color: #F5F1EA;
+  color: #8C8479;
+  border: 1px solid #E8E2D8;
+}
+
+/* Terracota alias (single r) for Tailwind compat */
+.badge-terracota {
+  background-color: var(--color-terracotta-pastel);
+  color: var(--color-terracotta);
+  border: 1px solid var(--color-terracotta-border);
+}
+
+/* Earthy primary and secondary buttons */
+.btn-sage {
+  background-color: var(--color-sage);
+  color: #FFFFFF;
+  border-radius: 0.625rem;
+  box-shadow: 0 2px 4px rgba(94, 126, 98, 0.2);
+}
+.btn-sage:hover {
+  background-color: var(--color-sage-hover);
+  box-shadow: 0 4px 8px rgba(94, 126, 98, 0.25);
+  transform: translateY(-1px);
+}
+
+.btn-terracotta {
+  background-color: var(--color-terracotta);
+  color: #FFFFFF;
+  border-radius: 0.625rem;
+  box-shadow: 0 2px 4px rgba(200, 104, 76, 0.2);
+}
+.btn-terracotta:hover {
+  background-color: var(--color-terracotta-hover);
+  box-shadow: 0 4px 8px rgba(200, 104, 76, 0.25);
+  transform: translateY(-1px);
+}
+
+.btn-sand {
+  background-color: #F2ECE1;
+  color: var(--color-text-title);
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+}
+.btn-sand:hover {
+  background-color: #E7DFCFA0;
+  transform: translateY(-1px);
+}
+
+/* Modals */
+.modal-backdrop {
+  background-color: rgba(36, 32, 28, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 220ms ease-out forwards;
+}
+
+/* Toast Notifications */
+#toast-notification {
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-body);
+  z-index: 9999;
+}
+
+/* Sophisticated Textures & Material Depths */
+.texture-canvas {
+  background-color: #FAF8F5;
+  background-image: radial-gradient(rgba(140, 132, 121, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.texture-card {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FCFBF9 100%);
+  border: 1px solid #E8E2D8;
+  box-shadow: 0 1px 3px rgba(43, 40, 36, 0.03), 0 8px 20px -4px rgba(43, 40, 36, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  border-radius: 1rem;
+}
+
+/* 3D Tactile Icon Emboss Elements (No AI Emojis) */
+.icon-3d {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.625rem;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.icon-3d-sage {
+  background: linear-gradient(135deg, #749678 0%, #4B6B4F 100%);
+  color: #FFFFFF;
+  box-shadow: 0 3px 6px -1px rgba(75, 107, 79, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.icon-3d-terracotta {
+  background: linear-gradient(135deg, #DE7E63 0%, #B0553B 100%);
+  color: #FFFFFF;
+  box-shadow: 0 3px 6px -1px rgba(176, 85, 59, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.icon-3d-amber {
+  background: linear-gradient(135deg, #E6B585 0%, #B37D4A 100%);
+  color: #FFFFFF;
+  box-shadow: 0 3px 6px -1px rgba(179, 125, 74, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.icon-3d-sand {
+  background: linear-gradient(135deg, #FFFFFF 0%, #EFEAE2 100%);
+  color: #57524A;
+  border: 1px solid #E2D9CC;
+  box-shadow: 0 2px 4px rgba(60, 48, 36, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Crisp Vector Star Rating */
+.star-rating-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  fill: #D4A373;
+  vertical-align: -1px;
+}

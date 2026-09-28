@@ -1,0 +1,366 @@
+=== PAGE 1 ===
+G-MAP COMPETITOR ANALYSIS
+Detailed Project Specification — Fictional Sample Dataset
+ All names, numbers, reviews and posts in this document are fictional. They are sample data only and should be
+replaced with permitted real data during implementation.
+Core idea: create ONE merged market-intelligence dashboard. Do not create a separate dashboard for every competitor.
+Every aggregate result keeps a link to the business and source review/post that produced it.
+1. PROJECT SCENARIO
+Target business: Urban Bean Café. The system compares it with five fictional nearby cafés. The final dashboard combines all
+businesses into common market metrics while retaining company-level and record-level attribution.
+Role
+Business
+Zone
+Rating
+Reviews
+Posts
+TARGET
+Urban Bean Café
+Juhu Zone
+4.3
+2,850
+18
+COMPETITOR A
+BrewBerry Café
+Juhu Zone
+4.5
+5,420
+42
+COMPETITOR B
+Bean Street
+Juhu Zone
+4.4
+3,850
+27
+COMPETITOR C
+The Green Cup
+Bandra Zone
+4.6
+4,230
+36
+COMPETITOR D
+Daily Grind House
+Andheri Zone
+4.2
+6,100
+51
+COMPETITOR E
+Coffee Canvas
+Versova Zone
+4.5
+2,640
+22
+These values are intentionally fictional and demonstrate the structure, not actual Google Maps measurements.
+2. PROJECT OBJECTIVES
+1. Identify a target business and comparable competitors.
+2. Combine business, review, post and geographic information.
+3. Analyze sentiment and recurring topics.
+4. Measure content/post activity.
+5. Produce market-level insights instead of separate competitor dashboards.
+6. Preserve source attribution so every result can be traced to a company and record.
+7. Allow filtering, hovering and drill-through in the final dashboard.
+3. DATA PIPELINE
+ PERMITTED DATA SOURCES → DATA COLLECTION → CLEANING → DATABASE → NLP/TOPIC ANALYSIS → BUSINESS-LEVEL
+METRICS → MARKET AGGREGATION → INTERACTIVE DASHBOARD → SOURCE EXPLORER
+Important: API availability and authorization determine which Google Business Profile/Places fields can actually be collected.
+The design should not depend on scraping Google Maps pages.
+4. DATABASE DESIGN
+ Table
+Key fields
+Purpose
+businesses
+business_id, name, category, zone, lat, lon, rating, review_count
+Business/profile layer
+reviews
+review_id, business_id, date, rating, text, sentiment
+Individual review layer
+posts
+post_id, business_id, date, type, text
+Individual post layer
+topics
+topic_id, topic_name
+Controlled topic list
+review_topics
+review_id, topic_id, score
+Review → topic mapping
+post_topics
+post_id, topic_id
+Post → topic mapping
+
+
+=== PAGE 2 ===
+Table
+Key fields
+Purpose
+competitor_group
+target_id, competitor_id, distance
+Comparison definition
+metrics
+metric_id, business_id, date, metric_name, value, source_id
+Calculated metrics + provenance
+5. SAMPLE REVIEW RECORDS
+ID
+Company
+Rating
+Date
+Review text
+Sentiment
+Topics
+REV001
+Urban Bean Café
+2
+05-Sep
+Coffee good, but we waited too long.
+Negative
+Waiting; Service
+REV002
+BrewBerry Café
+5
+06-Sep
+Great ambience and friendly staff.
+Positive
+Ambience; Staff
+REV003
+Bean Street
+3
+08-Sep
+Food was nice but prices felt high.
+Mixed
+Food; Price
+REV004
+The Green Cup
+5
+09-Sep
+Excellent coffee and quick service.
+Positive
+Food; Service
+REV005
+Daily Grind House
+2
+10-Sep
+Long wait although it was not crowded.
+Negative
+Waiting; Service
+REV006
+Coffee Canvas
+4
+11-Sep
+Quiet place to work and good coffee.
+Positive
+Ambience; Food
+6. SAMPLE POST RECORDS
+ID
+Company
+Date
+Type
+Post text
+Topics
+POST001
+Urban Bean Café
+01-Sep
+Offer
+Weekend coffee combo — limited time.
+Offer; Coffee
+POST002
+BrewBerry Café
+03-Sep
+Event
+Live acoustic evening this Friday.
+Event; Music
+POST003
+Bean Street
+05-Sep
+Product
+Introducing our new cold brew.
+Product; Coffee
+POST004
+The Green Cup
+07-Sep
+Offer
+Healthy breakfast combo available.
+Offer; Food
+POST005
+Daily Grind House
+08-Sep
+Update
+Extended hours for festival week.
+Update; Hours
+POST006
+Coffee Canvas
+10-Sep
+Product
+New dessert menu now available.
+Product; Dessert
+
+
+=== PAGE 3 ===
+7. THE MERGED RESULT — MAIN DIFFERENCE
+The raw records above are transformed into a market view. The dashboard should show the combined result first, then allow
+the user to discover where that result came from.
+Merged result
+Example fictional output
+Attribution kept behind result
+Market average rating
+4.42
+All business IDs
+Total reviews
+24,090
+All business IDs
+Top discussion topic
+Food
+Review IDs + companies
+Top negative topic
+Waiting Time
+Review IDs + companies
+Most common post type
+Offer
+Post IDs + companies
+Highest posting activity
+Daily Grind House — 51
+Business ID + post IDs
+Do not label a competitor as “winner”. Present measurable differences and let the user inspect the evidence.
+8. HOVER / SOURCE ATTRIBUTION — CORE FEATURE
+Example A: Hover on “Waiting Time”
+ Topic: Waiting Time | Market mentions: 143 | Urban Bean: 31 | BrewBerry: 18 | Bean Street: 14 | Green Cup: 9 |
+Daily Grind: 52 | Coffee Canvas: 19
+Click → opens the 143 source reviews. The table contains review ID, company, date, rating, text, sentiment and topic.
+Example B: Hover on a post timeline point
+ Company: Coffee Canvas | Record type: Business Profile post | Date: 10-Sep-2026 | Type: Product | Topic:
+Dessert | Source ID: POST006
+Example C: Hover on negative sentiment
+ Negative: 11% → hover shows each company's contribution → click filters the entire dashboard to negative
+reviews.
+9. DASHBOARD PAGE 1 — MARKET OVERVIEW
+ KPI cards: Target rating | Market average | Target reviews | Market reviews | Target posts | Market posts |
+Positive sentiment | Negative sentiment
+Visuals: one rating comparison chart, one review-volume chart, one market map, one sentiment chart, one top-topic chart, one
+recent-content timeline.
+Filters: date range, company, topic, sentiment, rating, post type, zone.
+10. DASHBOARD PAGE 2 — COMPETITIVE LANDSCAPE
+Use a single scatter plot rather than six competitor dashboards.
+ X-axis: review count
+Y-axis: rating
+Bubble size: post activity
+Bubble label: company
+Hover: rating, reviews, posts, zone, distance, source timestamp
+11. DASHBOARD PAGE 3 — REVIEW INTELLIGENCE
+ Visual
+Purpose
+Hover / drill-through
+Sentiment chart
+Market positive/neutral/negative
+Company contribution + review IDs
+Topic ranking
+Most discussed topics
+Company breakdown + source reviews
+Negative-topic heatmap
+Which issues appear across businesses
+Company + topic + review count
+
+
+=== PAGE 4 ===
+Visual
+Purpose
+Hover / drill-through
+Rating distribution
+1–5 star distribution
+Business + exact counts
+Review timeline
+Review activity over time
+Date + company + review IDs
+
+
+=== PAGE 5 ===
+12. DASHBOARD PAGE 4 — POST / CONTENT INTELLIGENCE
+All competitors' posts appear on one timeline. A filter changes the market view without creating separate pages.
+Metric
+Example merged result
+Posts by month
+Sep: Urban Bean 6 | BrewBerry 11 | Bean Street 8 | Green Cup 9 | Daily Grind 13 | Coffee Canvas 5
+Post type
+Offer 34% | Product 29% | Event 18% | Update 13% | Other 6%
+Content themes
+Coffee 31% | Food 23% | Events 17% | Offers 15% | Dessert 8% | Other 6%
+Hovering any point identifies the company, post date, post type, topic and source ID.
+13. DASHBOARD PAGE 5 — GEOGRAPHIC INTELLIGENCE
+Place every fictional business on one map. Marker size can represent reviews; a control can switch it to posts, rating or
+sentiment.
+ Hover example: Business = Daily Grind House | Zone = Andheri | Rating = 4.2 | Reviews = 6,100 | Posts = 51 |
+Distance from target = 4.2 km
+14. DASHBOARD PAGE 6 — SOURCE EXPLORER
+This is the evidence layer. It makes the dashboard explainable instead of a black box.
+Field
+Example
+Source company
+Daily Grind House
+Source type
+Review
+Source ID
+REV005
+Date
+10-Sep-2026
+Rating
+2
+Original text
+Long wait although it was not crowded.
+Sentiment
+Negative
+Topics
+Waiting Time; Service
+Metrics affected
+Negative sentiment; Waiting Time; Service
+15. ONE POST → FINAL INSIGHT
+ Raw: POST001 — Urban Bean Café — “Weekend coffee combo — limited time.”
+Processing: POST001 → business_id=UB001 → type=Offer → topics={Coffee, Offer} → September post count +1 →
+Offer count +1 → Coffee count +1
+Final dashboard statement: “Offers represent 34% of market posts.” Hovering the Offer segment shows company contributions.
+Clicking it filters to the source posts, including POST001.
+16. TECHNOLOGY STACK
+ Layer
+Recommended option
+Data source
+Authorized Google APIs / approved dataset
+Programming
+Python
+Processing
+Pandas + NumPy
+Database
+MySQL / PostgreSQL
+NLP
+VADER / TextBlob / transformer model
+
+
+=== PAGE 6 ===
+Layer
+Recommended option
+Dashboard
+Power BI OR Streamlit + Plotly
+Source interaction
+Power BI drill-through / Plotly callbacks
+17. PROJECT MODULES
+ M1 Competitor discovery → M2 business data → M3 review processing → M4 post processing → M5 sentiment → M6
+topic extraction → M7 market aggregation → M8 geographic analysis → M9 source/provenance tracking → M10
+interactive dashboard.
+18. FINAL USER FLOW
+ USER SEES → “Waiting Time is a major negative topic.”
+↓
+HOVERS → sees each company's contribution.
+↓
+CLICKS COMPANY → dashboard filters to that business's records.
+↓
+CLICKS SOURCE → sees the original review/post.
+↓
+SOURCE EXPLORER → date + rating/type + text + sentiment + topics + source ID.
+19. FINAL PROJECT TITLE
+ “G-Map Local Competitor Intelligence System: Interactive, Merged and Source-Traceable Analysis of
+Business Reviews, Posts and Geographic Competition”
+20. WHAT MAKES THIS A STRONG PROJECT
+The novelty is the merged intelligence + provenance approach. You are not merely comparing ratings. You are combining
+multiple businesses into market-level insights while preserving the exact business and record behind each metric. This
+supports interactive exploration, explainable analytics, NLP, database design, geographic visualization and business
+intelligence in one project.
+Implementation note: The fictional dataset in this PDF is only a blueprint. When building the real system, replace it with data collected through permitted
+Google sources, and store collection timestamps and source identifiers. Current local-business analytics tools commonly combine competitor, review, post,
+profile and ranking signals in unified dashboards, supporting this overall product direction. ■cite■turn0search0■turn0search4■turn0search6■
+
+

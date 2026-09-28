@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapCompete - Google Maps Competitor Intelligence</title>
+    <meta name="description" content="Competitor intelligence tool for Google Maps updates">
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Space+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* CSS Variables for Design System - Earthy & Pastel Tones */
+        :root {
+          --color-background: #FFFFFF;
+          --color-primary-text: #2D3748; /* Dark slate for better contrast */
+          --color-secondary-text: #4A5568;
+          --color-muted-text: #718096;
+          --color-accent: #68D391; /* Sophisticated sage green */
+          --color-focus-accent: #48BB78; /* Vibrant emerald for active states */
+          --color-success: #68D391;
+          --color-warning: #F6E05E; /* Soft golden yellow */
+          --color-border-light: #EDF2F7;
+          --color-error: #E53E3E;
+          --color-header-bg: #F7FAFC; /* Ultra-light gray for header */
+          --color-sidebar-bg: #FFFFFF;
+
+          /* Transitions & Movements */
+          --transition-speed: 150ms;
+          --transition-easing: cubic-bezier(0.4, 0, 0.2, 1);
+
+          /* Elevation */
+          --elevation-low: 0px 1px 3px rgba(0,0,0,0.08);
+          --elevation-medium: 0px 4px 6px rgba(0,0,0,0.1);
+          --elevation-hover: 0px 4px 6px rgba(0,0,0,0.1);
+
+          /* Typography */
+          --font-header: 'Playfair Display', serif;
+          --font-body: 'Space Mono', monospace;
+        }
+
+        /* Base Styles */
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+
+        html {
+          font-size: 16px;
+        }
+
+        body {
+          font-family: var(--font-body);
+          color: var(--color-primary-text);
+          background-color: var(--color-background);
+          line-height: 1.6;
+        }
+
+        /* Heading Styles */
+        h1, h2, h3, h4, h5, h6 {
+          font-family: var(--font-header);
+          font-weight: 600;
+          line-height: 1.3;
+          margin-bottom: 0.5rem;
+          color: var(--color-primary-text);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+          background: var(--color-border-light);
+        }
+
+        ::-webkit-scrollbar-thumb {
+          background: var(--color-accent);
+          border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+          background: var(--color-focus-accent);
+        }
+
+        /* Focus Styles */
+        :focus-visible {
+          outline: 2px solid var(--color-focus-accent);
+          outline-offset: 2px;
+        }
+
+        /* Button Styles Override */
+        button {
+          transition: all var(--transition-speed) var(--transition-easing);
+          border: none;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        button:active {
+          transform: scale(0.98);
+        }
+
+        /* Card Styles */
+        .hover\:shadow-md:hover {
+          box-shadow: var(--elevation-medium);
+          transform: translateY(-2px);
+        }
+
+        .hover\:shadow-md:active {
+          transform: scale(0.98);
+        }
+
+        /* Input Styles */
+        input, select, textarea {
+          transition: border-color var(--transition-speed) var(--transition-easing);
+          border: 1px solid var(--color-border-light);
+          border-radius: 0;
+          padding: 0.5rem 0.75rem;
+          font-family: inherit;
+          font-size: 1rem;
+        }
+
+        input:focus, select:focus, textarea:focus {
+          border-color: var(--color-focus-accent);
+          box-shadow: 0 0 0 3px rgba(104, 211, 145, 0.2);
+          outline: none;
+        }
+
+        /* Skeleton Loading Animation */
+        @keyframes pulse {
+          0% {
+            background-color: var(--color-border-light);
+          }
+          50% {
+            background-color: rgba(104, 211, 145, 0.1);
+          }
+          100% {
+            background-color: var(--color-border-light);
+          }
+        }
+
+        .animate-pulse {
+          animation: pulse 1200ms infinite ease-in-out;
+        }
+
+        /* Mobile Styles */
+        @media (max-width: 639px) {
+          :root {
+            font-size: 14px;
+          }
+
+          .hidden\:md\:flex {
+            display: none !important;
+          }
+
+          .md\:hidden {
+            display: block !important;
+          }
+        }
+
+        /* Header Styles */
+        header {
+          background-color: var(--color-header-bg);
+          border-bottom: 1px solid var(--color-border-light);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        header h1 {
+          font-size: 1.5rem;
+          letter-spacing: -0.5px;
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        header h1 svg {
+          width: 1.5rem;
+          height: 1.5rem;
+          stroke: var(--color-focus-accent);
+          fill: none;
+          stroke-width: 2;
+        }
+
+        /* Icon button styles */
+        header button {
+          background: transparent;
+          border: none;
+          padding: 0.5rem;
+          border-radius: 0;
+          transition: all var(--transition-speed) var(--transition-easing);
+        }
+
+        header button:hover {
+          background-color: rgba(0, 0, 0, 0.03);
+          transform: none;
+        }
+
+        header button:active {
+          background-color: rgba(0, 0, 0, 0.05);
+          transform: none;
+        }
+
+        header button svg {
+          width: 1.25rem;
+          height: 1.25rem;
+          stroke: var(--color-primary-text);
+          stroke-width: 1.5;
+          fill: none;
+        }
+    </style>
+</head>
+<body class="bg-white text-gray-900 antialiased">
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- App Header -->
+        <header class="border-b border-gray-200 bg-white shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <!-- 3D Location Pin -->
+                    <div class="relative">
+                        <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor"/>
+                            <path d="M12 8v2m0 4h.01" stroke="currentColor" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <h1 class="text-xl font-bold text-gray-900">MapCompete</h1>
+                </div>
+
+                <div class="hidden md:flex items-center space-x-4">
+                    <!-- Project Selector -->
+                    <div class="relative">
+                        <label for="project-select" class="sr-only">Project selector</label>
+                        <select id="project-select" class="border border-gray-300 rounded-none px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white">
+                            <option value="1">ABC Salon</option>
+                            <option value="2">XYZ Spa</option>
+                        </select>
+                    </div>
+
+                    <button id="new-project-btn" class="px-4 py-2 bg-blue-500 text-white rounded-none hover:bg-blue-600 transition-colors duration-150">
+                        + New Project
+                    </button>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    <button id="theme-toggle" class="p-2 rounded-none hover:bg-gray-100 transition-colors duration-150" aria-label="Toggle theme">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="10" cy="10" r="6" stroke="currentColor"/>
+                            <path d="M10 4v2m0 12v2m6-6h2m-12 0H4m14.31-2.31a9 9 0 10-12.62 0" stroke="currentColor"/>
+                        </svg>
+                    </button>
+
+                    <button id="help-btn" class="p-2 rounded-none hover:bg-gray-100 transition-colors duration-150" aria-label="Help">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 8v2m0 12v2m9-9H9m12 0H9m0 0 6-6m6 6 6-6m-6 6 6-6" stroke="currentColor" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+
+                    <button id="profile-btn" class="p-2 rounded-none hover:bg-gray-100 transition-colors duration-150" aria-label="Profile">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="10" cy="10" r="8" stroke="currentColor"/>
+                            <circle cx="10" cy="10" r="1.5" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-hidden">
+            <!-- Project Selector Mobile -->
+            <div class="md:hidden border-b border-gray-200 bg-white">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-14">
+                    <div class="flex items-center space-x-3">
+                        <div class="relative">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="10" cy="10" r="8" stroke="currentColor"/>
+                            </svg>
+                        </div>
+                        <span class="font-medium text-gray-900">ABC Salon</span>
+                    </div>
+                    <button id="mobile-project-btn" class="px-3 py-1 text-sm bg-blue-500 text-white rounded-none hover:bg-blue-600 transition-colors duration-150">
+                        Change
+                    </button>
+                </div>
+            </div>
+
+            <!-- Main Navigation -->
+            <nav class="border-b border-gray-200 bg-white">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex space-x-4 py-3">
+                        <button id="dashboard-tab" class="tab-active border-b-2 border-blue-500 text-blue-500 px-3 py-2 text-sm font-medium">Dashboard</button>
+                        <button id="competitors-tab" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium border-b-2 border-transparent">Competitors</button>
+                        <button id="posts-tab" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium border-b-2 border-transparent">Posts</button>
+                        <button id="analytics-tab" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium border-b-2 border-transparent">Analytics</button>
+                        <button id="ideas-tab" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium border-b-2 border-transparent">Ideas</button>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Tab Content -->
+            <div id="tab-content" class="flex-1 overflow-y-auto p-6">
+                <!-- Dashboard View -->
+                <section id="dashboard-view" class="space-y-8">
+                    <!-- Stats Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <!-- Competitors Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">Competitors</p>
+                                        <p class="text-3xl font-bold text-gray-900" id="competitors-count">0</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                        <span class="text-xs text-blue-500">Active</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-2/3 bg-blue-500 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Total Posts Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">Total Posts</p>
+                                        <p class="text-3xl font-bold text-gray-900" id="total-posts-count">0</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                                        <span class="text-xs text-green-500">Growing</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-1/2 bg-green-500 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- New Posts Today Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">New Posts Today</p>
+                                        <p class="text-3xl font-bold text-gray-900" id="new-posts-count">0</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                                        <span class="text-xs text-yellow-500">Recent</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-3/4 bg-yellow-500 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Duplicates Skipped Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">Duplicates Skipped</p>
+                                        <p class="text-3xl font-bold text-gray-900" id="duplicates-count">0</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-gray-500 rounded-full"></div>
+                                        <span class="text-xs text-gray-500">Filtered</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-1/4 bg-gray-500 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Top Topic Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">Top Topic</p>
+                                        <p class="text-2xl font-bold text-gray-900" id="top-topic">None</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                        <span class="text-xs text-purple-500">Trending</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-full bg-purple-500/20 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Ideas Generated Card -->
+                        <div class="bg-white border border-gray-200 rounded-none hover:shadow-md transition-shadow duration-150">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm text-gray-500">Ideas Generated</p>
+                                        <p class="text-3xl font-bold text-gray-900" id="ideas-count">0</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                                        <span class="text-xs text-indigo-500">Ready</span>
+                                    </div>
+                                </div>
+                                <div class="mt-4 h-1 w-full bg-gray-200 rounded-none">
+                                    <div class="h-1 w-full bg-indigo-500/20 rounded-none"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Recent Activity</h2>
+                            <div class="space-y-4" id="recent-activity">
+                                <!-- Activity items will be populated here -->
+                                <div class="p-4 border-l-4 border-blue-500 bg-gray-50">
+                                    <div class="flex items-start space-x-3">
+                                        <div class="flex-shrink-0">
+                                            <div class="w-8 h-8 bg-blue-500 text-white rounded-none flex items-center justify-center text-sm font-bold">
+                                                S
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p class="font-medium text-gray-900">No recent activity</p>
+                                            <p class="text-sm text-gray-500"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Competitors View -->
+                <section id="competitors-view" class="hidden space-y-8">
+                    <!-- Competitors Management -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Competitors</h2>
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:mb-6">
+                                <div class="flex items-center space-x-3">
+                                    <input type="text" id="competitor-search" placeholder="Search competitors..." class="border border-gray-300 rounded-none px-3 py-2 w-full max-w-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                </div>
+                                <button id="add-competitor-btn" class="px-4 py-2 bg-blue-500 text-white rounded-none hover:bg-blue-600 transition-colors duration-150">
+                                    Add Competitor
+                                </button>
+                            </div>
+
+                            <!-- Competitors Table -->
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posts</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Scraped</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-200" id="competitors-table-body">
+                                        <!-- Table rows will be populated here -->
+                                        <tr>
+                                            <td colspan="4" class="px-6 py-4 text-center text-gray-500">
+                                                No competitors found. Add your first competitor to get started.
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Posts View -->
+                <section id="posts-view" class="hidden space-y-8">
+                    <!-- Posts Filters -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Competitor Posts</h2>
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+                                <div>
+                                    <label for="project-filter" class="block text-sm font-medium text-gray-700 mb-1">Project</label>
+                                    <select id="project-filter" class="border border-gray-300 rounded-none px-3 py-2 w-full focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                        <option value="all">All Projects</option>
+                                        <option value="1">ABC Salon</option>
+                                        <option value="2">XYZ Spa</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="competitor-filter" class="block text-sm font-medium text-gray-700 mb-1">Competitor</label>
+                                    <select id="competitor-filter" class="border border-gray-300 rounded-none px-3 py-2 w-full focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                        <option value="all">All Competitors</option>
+                                        <option value="1">Competitor A</option>
+                                        <option value="2">Competitor B</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="date-filter" class="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+                                    <select id="date-filter" class="border border-gray-300 rounded-none px-3 py-2 w-full focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                        <option value="all">All Time</option>
+                                        <option value="today">Today</option>
+                                        <option value="week">This Week</option>
+                                        <option value="month">This Month</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="keyword-filter" class="block text-sm font-medium text-gray-700 mb-1">Keyword/Topic</label>
+                                    <input type="text" id="keyword-filter" placeholder="Search..." class="border border-gray-300 rounded-none px-3 py-2 w-full focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                </div>
+                            </div>
+
+                            <!-- Posts Grid -->
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" id="posts-grid">
+                                <!-- Post cards will be populated here -->
+                                <div class="col-span-3 text-center py-12">
+                                    <div class="w-16 h-16 mx-auto bg-[#F5F2EB] text-[#57524A] rounded-xl flex items-center justify-center border border-[#E8E2D8]">
+                                        <svg class="w-7 h-7 text-[#8C8479]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                                    </div>
+                                    <h3 class="text-lg font-bold mt-4">No posts found</h3>
+                                    <p class="text-gray-500 mt-2">Try adjusting your filters or scraping for new data</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Analytics View -->
+                <section id="analytics-view" class="hidden space-y-8">
+                    <!-- Analytics Charts -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Analytics & Insights</h2>
+
+                            <!-- Topic Frequency -->
+                            <div class="mb-8">
+                                <h3 class="text-xl font-semibold mb-4">Top Topics</h3>
+                                <div class="space-y-3" id="topic-chart">
+                                    <!-- Topic bars will be populated here -->
+                                    <div class="text-center py-8 text-gray-500">No topic data available</div>
+                                </div>
+                            </div>
+
+                            <!-- Keyword Frequency -->
+                            <div class="mb-8">
+                                <h3 class="text-xl font-semibold mb-4">Frequent Keywords</h3>
+                                <div class="space-y-2" id="keyword-list">
+                                    <!-- Keywords will be populated here -->
+                                    <div class="text-center py-8 text-gray-500">No keyword data available</div>
+                                </div>
+                            </div>
+
+                            <!-- Competitor Activity -->
+                            <div class="mb-8">
+                                <h3 class="text-xl font-semibold mb-4">Competitor Activity</h3>
+                                <div class="overflow-x-auto">
+                                    <div class="min-w-full">
+                                        <table class="min-w-full divide-y divide-gray-200">
+                                            <thead>
+                                                <tr>
+                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Competitor</th>
+                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Week 1</th>
+                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Week 2</th>
+                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Week 3</th>
+                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Week 4</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td colspan="5" class="px-6 py-4 text-center text-gray-500">
+                                                        No competitor activity data
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ideas View -->
+                <section id="ideas-view" class="hidden space-y-8">
+                    <!-- Content Generator -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Content Ideas Generator</h2>
+
+                            <!-- Generator Form -->
+                            <div class="mb-6">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between sm:mb-4">
+                                    <div class="flex items-center space-x-3 w-full sm:w-auto">
+                                        <label for="ideas-count" class="block text-sm font-medium text-gray-700 mb-1">Number of ideas:</label>
+                                        <input type="number" id="ideas-count" min="1" max="50" value="5" class="border border-gray-300 rounded-none px-3 py-2 w-20 focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                    </div>
+                                    <button id="generate-ideas-btn" class="px-4 py-2 bg-blue-500 text-white rounded-none hover:bg-blue-600 transition-colors duration-150">
+                                        Generate Ideas
+                                    </button>
+                                </div>
+                                <div class="flex items-center mt-4">
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox" id="complete-update-toggle" class="h-4 w-4 text-blue-500 focus:ring-blue-500 border-gray-300 rounded">
+                                        <span class="text-sm text-gray-700">Generate complete updates</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Loading State -->
+                            <div id="ideas-loading" class="hidden text-center py-8">
+                                <div class="flex items-center justify-center space-x-3">
+                                    <div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <p class="text-sm text-gray-500">Generating ideas...</p>
+                                </div>
+                            </div>
+
+                            <!-- Ideas Results -->
+                            <div id="ideas-results" class="space-y-4">
+                                <!-- Idea cards will be populated here -->
+                                <div class="text-center py-8 text-gray-500">
+                                    Generate ideas to see results here
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Previously Generated Ideas -->
+                    <div class="bg-white border border-gray-200 rounded-none">
+                        <div class="p-6">
+                            <h2 class="text-lg font-semibold mb-4">Previously Generated Ideas</h2>
+                            <div class="space-y-3" id="previous-ideas">
+                                <!-- Previous ideas will be populated here -->
+                                <div class="text-center py-8 text-gray-500">
+                                    No previously generated ideas
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Mobile Sidebar -->
+    <div id="mobile-sidebar" class="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 -translate-x-full transition-transform duration-300 ease-in-out z-50">
+        <div class="h-full flex flex-col">
+            <div class="flex-shrink-0 px-6 py-4 border-b border-gray-200">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold">Menu</h2>
+                    <button id="mobile-close-btn" class="p-2 rounded-none hover:bg-gray-100 transition-colors duration-150">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-linecap="round"/>
+                        </svg>
+                    </button

@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapCompete • Google Maps Competitor Intelligence</title>
+    <meta name="description" content="Earthy, modern competitor intelligence tool for Google Maps updates and AI content strategy">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS with custom Earthy & Pastel config -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        canvas: '#FAF8F5',
+                        surface: '#FFFFFF',
+                        border: '#E8E2D8',
+                        sage: {
+                            50: '#F4F7F4',
+                            100: '#EBF2EC',
+                            200: '#C8DBCB',
+                            300: '#B2C9B5',
+                            400: '#8FAA92',
+                            500: '#5E7E62',
+                            600: '#4B684E',
+                            700: '#3A523D',
+                            800: '#2E4230',
+                        },
+                        terracotta: {
+                            50: '#FDF6F3',
+                            100: '#FCEFEA',
+                            200: '#F3CEC3',
+                            300: '#E8B4A2',
+                            400: '#DA8E70',
+                            500: '#C8684C',
+                            600: '#B0553B',
+                            700: '#8E3F28',
+                            800: '#6E3120',
+                        },
+                        // Single-r alias so existing `terracota-*` utility classes render correctly
+                        terracota: {
+                            50: '#FDF6F3',
+                            100: '#FCEFEA',
+                            200: '#F3CEC3',
+                            300: '#E8B4A2',
+                            400: '#DA8E70',
+                            500: '#C8684C',
+                            600: '#B0553B',
+                            700: '#8E3F28',
+                            800: '#6E3120',
+                        },
+                        amber: {
+                            50: '#FEFAF2',
+                            100: '#FDF6EC',
+                            200: '#F4DFBF',
+                            300: '#EACFA8',
+                            400: '#E1B98A',
+                            500: '#D4A373',
+                            600: '#B8824C',
+                            700: '#8F5D2C',
+                            800: '#6E4720',
+                        },
+                        sand: {
+                            50: '#FAF8F5',
+                            100: '#F5F1EA',
+                            200: '#EAE4DC',
+                            300: '#D8D0C4',
+                            400: '#7C7468',
+                            500: '#8C8479',
+                            600: '#6B6459',
+                            700: '#514B42',
+                            800: '#4A433A',
+                            900: '#2B2824',
+                        },
+                        clay: {
+                            100: '#F7EFEB',
+                            200: '#E6D2C8',
+                            300: '#D9BFAF',
+                            400: '#C29F8C',
+                            500: '#8C6A58',
+                            600: '#7B5C4B',
+                            700: '#5E4739',
+                            800: '#46342A',
+                        }
+                    },
+                    fontFamily: {
+                        serif: ['"Playfair Display"', 'Georgia', 'serif'],
+                        sans: ['"Plus Jakarta Sans"', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Chart.js for real interactive graphs (Responsive & Canvas-based) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+    <!-- Leaflet for Geographic Intelligence maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%235E7E62%22/><path d=%22M9 16h14M16 9v14%22 stroke=%22%23FAF8F5%22 stroke-width=%222.5%22 stroke-linecap=%22round%22/></svg>">
+</head>
+<body class="bg-[#FAF8F5] texture-canvas text-sand-900 antialiased min-h-screen flex flex-col font-sans">
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- App Header -->
+        <header class="border-b border-[#E8E2D8] bg-[#FAF8F5]/90 backdrop-blur-md sticky top-0 z-40">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+                <!-- Brand Logo -->
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-sage-100 border border-sage-200 flex items-center justify-center text-sage-600 shadow-sm">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+                            <circle cx="12" cy="10" r="3"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold font-serif text-sand-900 tracking-tight flex items-center gap-1.5">
+                            MapCompete
+                            <span class="text-[10px] font-sans font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-sage-100 text-sage-600 border border-sage-200">Intelligence</span>
+                        </h1>
+                    </div>
+                </div>
+
+                <!-- Center: Project Switcher & New Project -->
+                <div class="hidden md:flex items-center space-x-3">
+                    <div class="flex items-center bg-white border border-[#E8E2D8] rounded-xl px-3 py-1.5 shadow-sm hover:border-sand-300 transition-colors">
+                        <span class="text-xs text-sand-500 mr-2 font-medium">Project:</span>
+                        <select id="project-select" class="text-sm font-semibold text-sand-900 bg-transparent border-none focus:ring-0 cursor-pointer outline-none pr-6">
+                            <option value="">Loading projects...</option>
+                        </select>
+                    </div>
+
+                    <!-- Edit / delete the selected project (company details) -->
+                    <div class="flex items-center gap-1">
+                        <button id="edit-project-btn" title="Edit project name and details" class="p-2 rounded-xl text-sand-500 hover:text-sage-700 hover:bg-white border border-transparent hover:border-[#E8E2D8] transition-all">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                        </button>
+                        <button id="delete-project-btn" title="Delete this project" class="p-2 rounded-xl text-sand-500 hover:text-terracota-600 hover:bg-white border border-transparent hover:border-[#E8E2D8] transition-all">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        </button>
+                    </div>
+
+                    <button id="new-project-btn" class="px-3.5 py-1.5 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-1.5">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
+                        New Project
+                    </button>
+                </div>
+
+                <!-- Right: Quick Status & Info -->
+                <div class="flex items-center space-x-2">
+                    <div class="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-sage-50 border border-sage-200 text-xs font-medium text-sage-700">
+                        <span class="w-2 h-2 rounded-full bg-sage-500 animate-pulse"></span>
+                        Auto-Sync Active
+                    </div>
+
+                    <button id="help-btn" class="p-2 rounded-xl text-sand-500 hover:text-sand-900 hover:bg-white border border-transparent hover:border-[#E8E2D8] transition-all" title="Help Guide">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Mobile Project Bar (visible only on small screens < 768px for phone viewing) -->
+        <div class="md:hidden border-b border-[#E8E2D8] bg-white px-4 py-2 flex items-center justify-between gap-2 shadow-2xs">
+            <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                <span class="text-xs text-sand-500 font-medium">Project:</span>
+                <select id="mobile-project-select" class="text-xs font-bold text-sand-900 bg-sand-50 border border-[#E8E2D8] rounded-lg px-2 py-1 outline-none flex-1 truncate">
+                    <option value="">Loading projects...</option>
+                </select>
+            </div>
+            <button id="mobile-edit-project-btn" title="Edit project" class="p-1.5 rounded-lg text-sand-500 hover:text-sage-700 hover:bg-sand-50 border border-[#E8E2D8] shrink-0">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+            </button>
+            <button id="mobile-delete-project-btn" title="Delete project" class="p-1.5 rounded-lg text-sand-500 hover:text-terracota-600 hover:bg-sand-50 border border-[#E8E2D8] shrink-0">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
+            <button id="mobile-new-project-btn" class="px-2.5 py-1 bg-sage-500 text-white text-[11px] font-semibold rounded-lg shrink-0">
+                + New
+            </button>
+        </div>
+
+        <main class="flex-1 flex flex-col">
+            <!-- Navigation Tabs Bar -->
+            <nav class="border-b border-[#E8E2D8] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex space-x-2 py-2.5 overflow-x-auto touch-scroll scrollbar-none">
+                        <button id="dashboard-tab" class="nav-tab tab-active px-4 py-2 text-sm font-semibold flex items-center gap-2 shrink-0">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+                            Dashboard
+                        </button>
+                        <button id="competitors-tab" class="nav-tab px-4 py-2 text-sm font-medium flex items-center gap-2 shrink-0">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            Competitors
+                        </button>
+                        <button id="posts-tab" class="nav-tab px-4 py-2 text-sm font-medium flex items-center gap-2 shrink-0">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            Posts & Updates
+                        </button>
+                        <button id="analytics-tab" class="nav-tab px-4 py-2 text-sm font-medium flex items-center gap-2 shrink-0">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                            Market Analytics
+                        </button>
+                        <button id="ideas-tab" class="nav-tab px-4 py-2 text-sm font-medium flex items-center gap-2 shrink-0">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636-.707.707M21 12h-1M4 12H3m3.343-5.657-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                            AI Content Studio
+                        </button>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Tab Content Container -->
+            <div id="tab-content" class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+                <!-- ========================================== -->
+                <!-- 1. DASHBOARD VIEW (COMPREHENSIVE) -->
+                <!-- ========================================== -->
+                <section id="dashboard-view" class="space-y-8 animate-fade-in">
+                    <!-- Dashboard Executive Banner -->
+                    <div class="bg-gradient-to-r from-[#FAF5EE] via-[#F4EFE6] to-[#EBE4D8] border border-[#E5DDD0] rounded-2xl p-6 sm:p-7 shadow-sm">
+                        <div class="flex flex-md:flex-row md:items-center md:justify-between gap-5">
+                            <div>
+                                <div class="flex items-center gap-2.5 mb-2">
+                                    <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-terracota-100 text-terracota-600 border border-terracota-200">
+                                        Local SEO Radar
+                                    </span>
+                                    <span class="text-xs text-sand-500 font-medium" id="dashboard-last-sync">Updated recently</span>
+                                </div>
+                                <h2 class="text-2xl sm:text-3xl font-bold font-serif text-sand-900 tracking-tight" id="dashboard-project-title">
+                                    Aura Salon & Wellness
+                                </h2>
+                                <p class="text-sm text-sand-600 mt-1 max-w-2xl" id="dashboard-project-desc">
+                                    Monitoring top local competitors on Google Maps to generate high-performing post ideas and uncover market trends.
+                                </p>
+                            </div>
+
+                            <!-- Executive Quick Actions -->
+                            <div class="flex flex-wrap items-center gap-2.5">
+                                <button id="dash-quick-add-btn" class="px-4 py-2.5 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2">
+                                    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
+                                    Add Competitor
+                                </button>
+                                <button id="dash-quick-scrape-btn" class="px-4 py-2.5 bg-white hover:bg-sand-50 text-sand-900 border border-[#E8E2D8] text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2">
+                                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                                    Scrape Updates
+                                </button>
+                                <button id="dash-quick-ideas-btn" class="px-4 py-2.5 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2">
+                                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                                    Generate Ideas
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6 Key Performance Metric Cards -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                        <!-- 1. Competitors Tracked -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Tracked Competitors</span>
+                                <span class="badge-sage text-[11px] font-semibold px-2 py-0.5 rounded-full">Active</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="competitors-count">3</p>
+                                <span class="text-xs text-sage-600 font-medium">100% indexed</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-sage-500 rounded-full w-3/4"></div>
+                            </div>
+                        </div>
+
+                        <!-- 2. Total Captured Posts -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Total Posts Captured</span>
+                                <span class="badge-terracota text-[11px] font-semibold px-2 py-0.5 rounded-full">Repository</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="total-posts-count">9</p>
+                                <span class="text-xs text-terracota-600 font-medium">+100% analyzed</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-terracota-500 rounded-full w-4/5"></div>
+                            </div>
+                        </div>
+
+                        <!-- 3. New Updates Today -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">New Updates Synced</span>
+                                <span class="badge-amber text-[11px] font-semibold px-2 py-0.5 rounded-full">Recent</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="new-posts-count">9</p>
+                                <span class="text-xs text-amber-700 font-medium">Fresh content</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-amber-500 rounded-full w-3/5"></div>
+                            </div>
+                        </div>
+
+                        <!-- 4. Duplicates Filtered -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Duplicates Filtered</span>
+                                <span class="badge-clay text-[11px] font-semibold px-2 py-0.5 rounded-full">De-duped</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="duplicates-count">2</p>
+                                <span class="text-xs text-sand-500 font-medium">Clean repository</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-clay-500 rounded-full w-2/5"></div>
+                            </div>
+                        </div>
+
+                        <!-- 5. Dominant Topic -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Dominant Market Topic</span>
+                                <span class="badge-sage text-[11px] font-semibold px-2 py-0.5 rounded-full">Trending</span>
+                            </div>
+                            <div class="mt-3">
+                                <p class="text-xl font-bold font-serif text-sand-900 truncate" id="top-topic">Special Promotions</p>
+                                <span class="text-xs text-sage-600 font-medium">Highest competitor focus</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-sage-500 rounded-full w-full"></div>
+                            </div>
+                        </div>
+
+                        <!-- 6. Generated Content -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Generated Content</span>
+                                <span class="badge-terracota text-[11px] font-semibold px-2 py-0.5 rounded-full">Content Pool</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="ideas-count-kpi">3</p>
+                                <span class="text-xs text-terracota-600 font-medium" id="generated-content-note">Ready to post</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-terracota-500 rounded-full w-1/2"></div>
+                            </div>
+                        </div>
+
+                        <!-- 7. Failed Scraping Attempts -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Failed Scraping Attempts</span>
+                                <span class="badge-clay text-[11px] font-semibold px-2 py-0.5 rounded-full">Reliability</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="failed-scrapes-count">0</p>
+                                <span class="text-xs text-sand-500 font-medium" id="failed-scrapes-note">No failures logged</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-clay-500 rounded-full w-1/5" id="failed-scrapes-bar"></div>
+                            </div>
+                        </div>
+
+                        <!-- 8. Images Downloaded -->
+                        <div class="earth-card p-5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Images Downloaded</span>
+                                <span class="badge-sage text-[11px] font-semibold px-2 py-0.5 rounded-full">Media</span>
+                            </div>
+                            <div class="flex items-baseline justify-between mt-3">
+                                <p class="text-3xl font-bold font-serif text-sand-900" id="images-downloaded-count">0</p>
+                                <span class="text-xs text-sage-600 font-medium" id="images-downloaded-note">From latest scrape</span>
+                            </div>
+                            <div class="mt-3.5 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-sage-500 rounded-full w-2/5"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Competitor Landscape Overview Table -->
+                    <div class="earth-card overflow-hidden">
+                        <div class="px-6 py-4 border-b border-[#E8E2D8] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[#FAF8F5]">
+                            <div>
+                                <h3 class="text-lg font-bold font-serif text-sand-900">Competitor Landscape</h3>
+                                <p class="text-xs text-sand-500">Google Maps profiles actively monitored for updates</p>
+                            </div>
+                            <div class="flex items-center gap-2 self-start sm:self-auto">
+                                <button id="dash-discover-competitors" class="px-3 py-1.5 bg-terracotta-600 hover:bg-terracotta-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-1.5">
+                                    <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                                    Discover Competitors
+                                </button>
+                                <button id="dash-view-all-competitors" class="text-xs font-semibold text-sage-600 hover:text-sage-700 flex items-center gap-1">
+                                    Manage Competitors &rarr;
+                                </button>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-[#E8E2D8]">
+                                <thead class="bg-white">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-semibold text-sand-500 uppercase tracking-wider">Competitor</th>
+                                        <th class="px-6 py-3 text-left text-xs font-semibold text-sand-500 uppercase tracking-wider">Last Sync</th>
+                                        <th class="px-6 py-3 text-right text-xs font-semibold text-sand-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-[#E8E2D8]" id="dashboard-competitors-table">
+                                    <!-- Populated dynamically via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Two-Column Grid: Market Insights + Latest Updates Feed -->
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        <!-- Left: Topics & Keywords (5 cols) -->
+                        <div class="lg:col-span-5 space-y-6">
+                            <!-- Trending Topics Card -->
+                            <div class="earth-card p-6">
+                                <h3 class="text-lg font-bold font-serif text-sand-900 mb-1">Top Competitor Themes</h3>
+                                <p class="text-xs text-sand-500 mb-4">Most frequent topics published by local competitors</p>
+                                <div class="space-y-3.5" id="dashboard-topics-list">
+                                    <!-- Populated dynamically -->
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between text-xs font-medium">
+                                            <span>Special Promotions</span>
+                                            <span class="text-sand-500">3 posts</span>
+                                        </div>
+                                        <div class="h-2 w-full bg-sand-100 rounded-full overflow-hidden">
+                                            <div class="h-full bg-terracota-500 rounded-full w-4/5"></div>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between text-xs font-medium">
+                                            <span>Service Highlights</span>
+                                            <span class="text-sand-500">2 posts</span>
+                                        </div>
+                                        <div class="h-2 w-full bg-sand-100 rounded-full overflow-hidden">
+                                            <div class="h-full bg-sage-500 rounded-full w-3/5"></div>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between text-xs font-medium">
+                                            <span>Hair Care & Skincare Tips</span>
+                                            <span class="text-sand-500">2 posts</span>
+                                        </div>
+                                        <div class="h-2 w-full bg-sand-100 rounded-free overflow-hidden">
+                                            <div class="h-full bg-amber-500 rounded-free w-2/5"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Keywords Cloud Card -->
+                            <div class="earth-card p-6">
+                                <h3 class="text-lg font-bold font-serif text-sand-900 mb-1">High-Impact Keywords</h3>
+                                <p class="text-xs text-sand-500 mb-4">Keywords used by competitors in local Maps search</p>
+                                <div class="flex flex-wrap gap-2" id="dashboard-keywords-cloud">
+                                    <span class="badge-sage px-3 py-1 rounded-full text-xs font-medium">#balayage</span>
+                                    <span class="badge-terracota px-3 py-1 rounded-full text-xs font-medium">#hydra facial</span>
+                                    <span class="badge-amber px-3 py-1 rounded-full text-xs font-medium">#organic</span>
+                                    <span class="badge-clay px-3 py-1 rounded-full text-xs font-medium">#weekend haircut</span>
+                                    <span class="badge-sage px-3 py-1 rounded-full text-xs font-medium">#clean beauty</span>
+                                    <span class="badge-terracota px-3 py-1 rounded-full text-xs font-medium">#fade sculpt</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right: Latest Competitor Updates Stream (7 cols) -->
+                        <div class="lg:col-span-7 space-y-6">
+                            <div class="earth-card p-6">
+                                <div class="flex items-center justify-between mb-4">
+                                    <div>
+                                        <h3 class="text-lg font-bold font-serif text-sand-900">Latest Competitor Updates</h3>
+                                        <p class="text-xs text-sand-500">Recent posts captured from Google Maps</p>
+                                    </div>
+                                    <button id="dash-view-all-posts" class="text-xs font-semibold text-terracota-600 hover:text-terracota-700">
+                                        View All Posts &rarr;
+                                    </button>
+                                </div>
+                                <div class="space-y-4" id="dashboard-recent-posts">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+
+                            <!-- AI Post Idea Spotlight -->
+                            <div class="bg-gradient-to-br from-terracota-50 to-sage-50 border border-terracota-200 rounded-2xl p-6 shadow-sm">
+                                <div class="flex items-center justify-between mb-3">
+                                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white border border-terracota-200 text-terracota-700 shadow-xs">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                        Recommended Post Concept
+                                    </span>
+                                    <span class="text-xs text-sand-500">Synthesized from Rivals</span>
+                                </div>
+                                <p class="text-sm font-medium text-sand-900 leading-relaxed" id="dashboard-spotlight-text">
+                                    "Upgrade your weekday rotation with our breathable Linen & Modern Tailoring collection. Designed with natural weaves and minimalist silhouettes for effortless style."
+                                </p>
+                                <div class="mt-3 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-terracota-100">
+                                    <div class="text-xs text-sand-500 flex items-center gap-2">
+                                        <span>CTA: <strong>Explore In-Store & Online</strong></span>
+                                    </div>
+                                    <button id="dashboard-copy-spotlight-btn" class="px-3.5 py-1.5 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-1.5">
+                                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                        Copy Update
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Scraping & Audit Activity Timeline -->
+                    <div class="earth-card p-6">
+                        <h3 class="text-lg font-bold font-serif text-sand-900 mb-1">Intelligence Activity Log</h3>
+                        <p class="text-xs text-sand-500 mb-4">Historical crawl runs and data updates</p>
+                        <div class="space-y-3" id="recent-activity">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- ============================================================ -->
+                    <!-- SCRAPING LOGS & STATISTICS (Requirement 21)                  -->
+                    <!-- ============================================================ -->
+                    <div class="earth-card p-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                            <div>
+                                <h3 class="text-lg font-bold font-serif text-sand-900">Scraping Logs &amp; Statistics</h3>
+                                <p class="text-xs text-sand-500">Persistent record of every scraping run: competitors processed, start/end time, posts found, new posts added, duplicates skipped, images downloaded, failures and CAPTCHA status</p>
+                            </div>
+                            <span class="text-xs font-semibold text-sand-600 self-start sm:self-auto" id="scraping-last-activity">No scraping activity yet</span>
+                        </div>
+
+                        <!-- Run summary strip -->
+                        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5" id="dashboard-scraping-stats">
+                            <!-- Populated dynamically -->
+                        </div>
+
+                        <!-- Per-run log table -->
+                        <div class="overflow-x-auto rounded-xl border border-[#E8E2D8]">
+                            <table class="min-w-full divide-y divide-[#E8E2D8]">
+                                <thead class="bg-[#FAF8F5]">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Competitor(s) Processed</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Start Time</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">End Time</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Posts Found</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">New Posts Added</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Duplicates Skipped</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Images Downloaded</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Failures</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">CAPTCHA / Manual</th>
+                                        <th class="px-4 py-3 text-left text-[11px] font-semibold text-sand-500 uppercase tracking-wider">Error Information</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-[#E8E2D8] bg-white" id="dashboard-scraping-logs-body">
+                                    <!-- Populated dynamically via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="text-[11px] text-sand-500 mt-3">
+                            Error information is archived in the backend log files (<span class="font-semibold">backend/logs/scraping_runs.log</span> and <span class="font-semibold">backend/logs/scraping_errors.log</span>) without altering any other data.
+                        </p>
+                    </div>
+
+                    <!-- ============================================================ -->
+                    <!-- STRATEGIC MARKET GAPS & OPPORTUNITIES SECTION                -->
+                    <!-- ============================================================ -->
+                    <div class="earth-card p-6" id="dashboard-market-gaps-card">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                            <div>
+                                <div class="flex items-center gap-2 mb-1.5">
+                                    <span class="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-semibold bg-terracota-100 text-terracota-700 border border-terracota-200">
+                                        <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                        Strategic Intelligence
+                                    </span>
+                                    <span class="text-xs text-sand-500 font-medium">Based on real market data</span>
+                                </div>
+                                <h3 class="text-xl font-bold font-serif text-sand-900">Market Gaps &amp; Competitive Opportunities</h3>
+                                <p class="text-xs text-sand-500 mt-0.5">Competitor vulnerabilities and actionable counter-strategies to outperform rivals</p>
+                            </div>
+                            <button onclick="document.querySelector('[data-tab=analytics]')?.click()" class="shrink-0 px-4 py-2 bg-white border border-[#E8E2D8] text-xs font-semibold text-sand-700 rounded-xl shadow-xs hover:bg-sand-50 transition-all flex items-center gap-1.5">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18M8 17V9m4 8V5m4 12V9"/></svg>
+                                Full Analytics
+                            </button>
+                        </div>
+                        <!-- Gap Cards Grid -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="dashboard-market-gaps">
+                            <div class="animate-pulse bg-sand-100 rounded-xl h-44"></div>
+                            <div class="animate-pulse bg-sand-100 rounded-xl h-44"></div>
+                            <div class="animate-pulse bg-sand-100 rounded-xl h-44"></div>
+                            <div class="animate-pulse bg-sand-100 rounded-xl h-44"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================== -->
+                <!-- 2. COMPETITORS VIEW -->
+                <!-- ========================================== -->
+                <section id="competitors-view" class="hidden space-y-6 animate-fade-in">
+                    <!-- Smart Google Maps Competitor Discovery Card -->
+                    <div class="earth-card p-6 bg-gradient-to-br from-white via-[#FAF8F5] to-[#F5EFEB] border border-[#E8E2D8]">
+                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+                            <div>
+                                <div class="flex items-center gap-2 mb-1.5">
+                                    <span class="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-semibold bg-terracota-100 text-terracota-700">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                        Smart Geo & Market Discovery
+                                    </span>
+                                    <span class="text-xs text-sand-500">Google Maps Intelligence</span>
+                                </div>
+                                <h2 class="text-xl font-bold font-serif text-sand-900">Discover Competitors on Google Maps</h2>
+                                <p class="text-xs text-sand-600 mt-1 max-w-2xl leading-relaxed">
+                                    Search any company name to automatically identify local physical competitors by geographic proximity, or national rivals if it's an online e-commerce brand (e.g. Meesho, Flipkart). Immediately select and track them in your project.
+                                </p>
+                            </div>
+
+                            <!-- Business Scope Toggle: Local Storefront vs Online Brand -->
+                            <div class="flex items-center bg-sand-100/80 p-1 rounded-xl border border-[#E8E2D8] self-start md:self-auto">
+                                <button type="button" id="scope-local-btn" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-sand-900 shadow-xs transition-all flex items-center gap-1.5">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                    Local Storefront
+                                </button>
+                                <button type="button" id="scope-online-btn" class="px-3 py-1.5 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900 transition-all flex items-center gap-1.5">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    Online Brand
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Discovery Input Form -->
+                        <form id="competitor-discovery-form" class="grid grid-cols-1 md:grid-cols-12 gap-3">
+                            <div class="md:col-span-4">
+                                <label class="block text-xs font-semibold text-sand-700 mb-1">Company / Brand Name *</label>
+                                <input type="text" id="discovery-company-name" required placeholder="e.g. Aura Salon, Meesho, Blue Tokai..." class="w-full border border-[#E8E2D8] bg-white rounded-xl px-3.5 py-2.5 text-xs text-sand-900 focus:ring-1 focus:ring-sage-500 outline-none">
+                            </div>
+                            <div class="md:col-span-3" id="discovery-location-col">
+                                <label class="block text-xs font-semibold text-sand-700 mb-1" id="discovery-location-label">Geographic Location</label>
+                                <input type="text" id="discovery-location" placeholder="e.g. Kharghar, Navi Mumbai" class="w-full border border-[#E8E2D8] bg-white rounded-xl px-3.5 py-2.5 text-xs text-sand-900 focus:ring-1 focus:ring-sage-500 outline-none">
+                            </div>
+                            <div class="md:col-span-3">
+                                <label class="block text-xs font-semibold text-sand-700 mb-1">Industry Field / Category</label>
+                                <input type="text" id="discovery-field" placeholder="e.g. Hair Salon, Fashion Marketplace..." class="w-full border border-[#E8E2D8] bg-white rounded-xl px-3.5 py-2.5 text-xs text-sand-900 focus:ring-1 focus:ring-sage-500 outline-none">
+                            </div>
+                            <div class="md:col-span-2 flex items-end">
+                                <button type="submit" id="discover-competitors-btn" class="w-full py-2.5 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 h-[38px]">
+                                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                                    <span>Discover</span>
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- Discovery Results Container (Shown when results exist) -->
+                        <div id="discovery-results-wrapper" class="hidden mt-6 pt-5 border-t border-[#E8E2D8] space-y-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-3.5 rounded-xl border border-[#E8E2D8]">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-sage-500 animate-pulse"></span>
+                                    <p class="text-xs font-semibold text-sand-900" id="discovery-meta-summary">
+                                        Identified Competitors on Google Maps
+                                    </p>
+                                </div>
+                                <button type="button" id="track-all-discovered-btn" class="px-3.5 py-1.5 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-1.5 self-start sm:self-auto">
+                                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
+                                    Track All Discovered
+                                </button>
+                            </div>
+
+                            <!-- Cards Grid -->
+                            <div id="discovery-cards-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <!-- Populated dynamically via JS -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tracked Competitors Table Card -->
+                    <div class="earth-card p-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                            <div>
+                                <h2 class="text-xl font-bold font-serif text-sand-900">Tracked Project Competitors</h2>
+                                <p class="text-xs text-sand-500 mt-0.5">Active competitor profiles being monitored for updates</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input type="text" id="competitor-search" placeholder="Filter tracked competitors..." class="border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs w-full max-w-xs focus:ring-1 focus:ring-sage-500 focus:border-sage-500 outline-none">
+                                <button id="add-competitor-btn" class="px-4 py-2 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm transition-all whitespace-nowrap">
+                                    + Add Custom
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Competitors Table -->
+                        <div class="overflow-x-auto rounded-xl border border-[#E8E2D8]">
+                            <table class="min-w-full divide-y divide-[#E8E2D8]">
+                                <thead class="bg-[#FAF8F5]">
+                                    <tr>
+                                        <th class="px-6 py-3.5 text-left text-xs font-semibold text-sand-500 uppercase tracking-wider">Business Name</th>
+                                        <th class="px-6 py-3.5 text-left text-xs font-semibold text-sand-500 uppercase tracking-wider">Last Scraped</th>
+                                        <th class="px-6 py-3.5 text-right text-xs font-semibold text-sand-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-[#E8E2D8] bg-white" id="competitors-table-body">
+                                    <!-- Table rows will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Project Keywords & Search Terms Card (Section 6 & 24 step 17) -->
+                    <div class="earth-card p-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold font-serif text-sand-900">Project Target Keywords</h3>
+                                <p class="text-xs text-sand-500 mt-0.5">Keywords tracked for this business to detect competitor content matches and search discovery</p>
+                            </div>
+                            <form id="add-keyword-form" class="flex items-center gap-2">
+                                <input type="text" id="new-keyword-input" placeholder="New keyword / phrase..." required class="border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-1.5 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                                <button type="submit" class="px-3.5 py-1.5 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl transition-all">
+                                    + Add
+                                </button>
+                            </form>
+                        </div>
+                        <div id="project-keywords-container" class="flex flex-wrap gap-2 pt-2">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================== -->
+                <!-- 3. POSTS VIEW -->
+                <!-- ========================================== -->
+                <section id="posts-view" class="hidden space-y-6 animate-fade-in">
+                    <div class="earth-card p-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                            <div>
+                                <h2 class="text-xl font-bold font-serif text-sand-900">Collected Competitor Updates</h2>
+                                <p class="text-xs text-sand-500 mt-0.5">Filter and review all posts extracted from Google Maps</p>
+                            </div>
+                        </div>
+
+                        <!-- Filter Controls -->
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6 bg-[#FAF8F5] p-4 rounded-xl border border-[#E8E2D8]">
+                            <div>
+                                <label for="competitor-filter" class="block text-xs font-semibold text-sand-600 mb-1">Filter by Competitor</label>
+                                <select id="competitor-filter" class="border border-[#E8E2D8] bg-white rounded-lg px-3 py-1.5 text-xs w-full focus:ring-1 focus:ring-sage-500 outline-none">
+                                    <option value="all">All Competitors</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="topic-filter" class="block text-xs font-semibold text-sand-600 mb-1">Filter by Topic</label>
+                                <select id="topic-filter" class="border border-[#E8E2D8] bg-white rounded-lg px-3 py-1.5 text-xs w-full focus:ring-1 focus:ring-sage-500 outline-none">
+                                    <option value="all">All Topics</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="keyword-filter" class="block text-xs font-semibold text-sand-600 mb-1">Search Keywords</label>
+                                <input type="text" id="keyword-filter" placeholder="Search keywords..." class="border border-[#E8E2D8] bg-white rounded-lg px-3 py-1.5 text-xs w-full focus:ring-1 focus:ring-sage-500 outline-none">
+                            </div>
+                        </div>
+
+                        <!-- Owner priority + hidden public posts (Requirement: post scraper) -->
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 p-4 rounded-xl bg-white border border-[#E8E2D8]">
+                            <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                                <span class="badge-sage px-2.5 py-0.5 rounded-full text-[11px] font-semibold">Owner updates first</span>
+                                <p class="text-xs text-sand-600">
+                                    <span id="owner-posts-count" class="font-bold text-sand-900">0</span> owner updates shown with priority &middot;
+                                    <span id="public-posts-count" class="font-bold text-sand-900">0</span> public posts
+                                    <span id="public-posts-state" class="text-sand-500">hidden</span>
+                                </p>
+                                <span id="own-profile-posts-count" class="hidden badge-terracota px-2.5 py-0.5 rounded-full text-[11px] font-semibold">Your profile: 0</span>
+                            </div>
+                            <button id="show-public-posts-btn" type="button" aria-pressed="false"
+                                    class="px-3.5 py-2 bg-white hover:bg-sand-50 text-sand-900 border border-[#E8E2D8] text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-1.5 self-start sm:self-auto">
+                                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <span id="show-public-posts-label">Show public posts</span>
+                            </button>
+                        </div>
+
+                        <!-- Posts Grid -->
+                        <div id="posts-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================== -->
+                <!-- 4. ANALYTICS VIEW -->
+                <!-- ========================================== -->
+                <!-- ========================================== -->
+                <!-- 4. ANALYTICS & MARKET INTELLIGENCE VIEW (PDF SPEC) -->
+                <!-- ========================================== -->
+                <section id="analytics-view" class="hidden space-y-6 animate-fade-in">
+                    <!-- Sub-Navigation for the 6 PDF Modules (Touch-friendly & Horizontal Scroll on Phone) -->
+                    <div class="flex items-center gap-1.5 p-1.5 bg-white border border-[#E8E2D8] rounded-2xl overflow-x-auto touch-scroll scrollbar-none shadow-xs">
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-semibold bg-sage-500 text-white shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-overview">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 3v18h18"/><rect width="4" height="7" x="7" y="10" rx="1"/><rect width="4" height="12" x="15" y="5" rx="1"/></svg>
+                            <span>Market Overview</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-scatter">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/><circle cx="12" cy="12" r="3"/></svg>
+                            <span>Competitive Landscape</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-reviews">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            <span>Review Intelligence</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-posts">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            <span>Content & Updates</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-geo">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                            <span>Geographic Map</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-explorer">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <span>Source Explorer</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-gaps">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                            <span>Market Gaps</span>
+                        </button>
+                        <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-medium text-sand-700 hover:text-sand-900 hover:bg-sand-50 shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-trends">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                            <span>Trend Analysis</span>
+                        </button>
+                    </div>
+
+                    <!-- MODULE 1: MARKET OVERVIEW & KPIS (PDF Page 3 & Section 9) -->
+                    <div id="module-overview" class="analytics-module space-y-6">
+                        <!-- 4 Merged KPI Cards -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div class="earth-card p-4 sm:p-5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Market Avg Rating</span>
+                                    <span class="badge-amber text-[10px] font-semibold px-2 py-0.5 rounded-full">Merged G-Map</span>
+                                </div>
+                                <div class="flex items-baseline justify-between mt-2.5">
+                                    <div class="flex items-center gap-1.5">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="#D4A373" stroke="#B8824C" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                        <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-avg-rating">4.5</p>
+                                    </div>
+                                    <span class="text-xs text-amber-700 font-medium" id="market-rating-basis">Across 4 rivals</span>
+                                </div>
+                                <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                    <div class="h-full bg-amber-500 rounded-full" id="market-rating-bar" style="width: 90%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="earth-card p-4 sm:p-5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Total Market Reviews</span>
+                                    <span class="badge-sage text-[10px] font-semibold px-2 py-0.5 rounded-full">Indexed</span>
+                                </div>
+                                <div class="flex items-baseline justify-between mt-2.5">
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-total-reviews">3,275</p>
+                                    <span class="text-xs text-sage-600 font-medium">Customer voices</span>
+                                </div>
+                                <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                    <div class="h-full bg-sage-500 rounded-full" style="width: 85%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="earth-card p-4 sm:p-5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Positive Sentiment</span>
+                                    <span class="badge-sage text-[10px] font-semibold px-2 py-0.5 rounded-full">NLP Scored</span>
+                                </div>
+                                <div class="flex items-baseline justify-between mt-2.5">
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-pos-sentiment">76.7%</p>
+                                    <span class="text-xs text-sage-600 font-medium">High satisfaction</span>
+                                </div>
+                                <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                    <div class="h-full bg-sage-500 rounded-full" id="market-pos-bar" style="width: 76.7%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="earth-card p-4 sm:p-5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold uppercase tracking-wider text-sand-500">Risk Factor / Negative</span>
+                                    <span class="badge-terracotta text-[10px] font-semibold px-2 py-0.5 rounded-full">Negative</span>
+                                </div>
+                                <div class="flex items-baseline justify-between mt-2.5">
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-neg-sentiment">16.7%</p>
+                                    <span class="text-xs text-terracotta-600 font-medium">Pricing / Issues</span>
+                                </div>
+                                <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
+                                    <div class="h-full bg-terracotta-500 rounded-full" id="market-neg-bar" style="width: 16.7%;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Real Charts Row: Rating Comparison + Review Volume + Sentiment Donut -->
+                        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                            <!-- Left: Rating & Review Volume Comparison (8 cols) -->
+                            <div class="lg:col-span-8 earth-card p-5 sm:p-6 space-y-4">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                    <div>
+                                        <h3 class="text-base font-bold font-serif text-sand-900">Competitor Performance Comparison</h3>
+                                        <p class="text-xs text-sand-500">Real Google Maps ratings and review volumes across tracked competitors</p>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 text-xs bg-sand-50 p-1 rounded-xl border border-[#E8E2D8]">
+                                        <button type="button" id="toggle-chart-rating" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white text-sand-900 shadow-2xs">Ratings (Score)</button>
+                                        <button type="button" id="toggle-chart-reviews" class="px-2.5 py-1 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900">Reviews (Volume)</button>
+                                    </div>
+                                </div>
+                                <div class="relative w-full h-64 sm:h-72">
+                                    <canvas id="chart-market-comparison"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Right: Sentiment Distribution Donut (4 cols) -->
+                            <div class="lg:col-span-4 earth-card p-5 sm:p-6 space-y-4">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Market Sentiment Ratio</h3>
+                                    <p class="text-xs text-sand-500">Aggregated sentiment analysis across 30 real reviews</p>
+                                </div>
+                                <div class="relative w-full h-52 flex items-center justify-center">
+                                    <canvas id="chart-market-sentiment"></canvas>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 text-center pt-2 border-t border-[#E8E2D8] text-xs">
+                                    <div>
+                                        <span class="block text-[10px] text-sage-600 font-semibold">Positive</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-pos-count">76.7%</span>
+                                    </div>
+                                    <div>
+                                        <span class="block text-[10px] text-amber-700 font-semibold">Neutral</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-neu-count">6.7%</span>
+                                    </div>
+                                    <div>
+                                        <span class="block text-[10px] text-terracotta-600 font-semibold">Negative</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-neg-count">16.7%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 2: COMPETITIVE LANDSCAPE SCATTER PLOT (PDF Page 3 & Section 10) -->
+                    <div id="module-scatter" class="analytics-module space-y-6 hidden">
+                        <div class="earth-card p-5 sm:p-6 space-y-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="badge-terracotta text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Page 3</span>
+                                        <h3 class="text-lg font-bold font-serif text-sand-900">Competitive Landscape Scatter Plot</h3>
+                                    </div>
+                                    <p class="text-xs text-sand-500 mt-0.5">
+                                        X-axis: Review count | Y-axis: Rating | Bubble size: Post activity | Click any bubble to inspect source records
+                                    </p>
+                                </div>
+                                <span class="text-xs font-semibold text-sand-600 bg-sand-100 px-3 py-1 rounded-full self-start sm:self-auto">
+                                    Interactive Tooltips & Filtering
+                                </span>
+                            </div>
+
+                            <div class="relative w-full h-80 sm:h-96">
+                                <canvas id="chart-competitive-scatter"></canvas>
+                            </div>
+
+                            <div id="competitive-matrix-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-[#E8E2D8]">
+                                <!-- Populated dynamically with positioning badges -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 3: REVIEW INTELLIGENCE (PDF Page 3 & 4 - Section 11) -->
+                    <div id="module-reviews" class="analytics-module space-y-6 hidden">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Left: 1-5 Star Rating Distribution -->
+                            <div class="earth-card p-5 sm:p-6 space-y-4">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Rating Distribution (1–5 Stars)</h3>
+                                    <p class="text-xs text-sand-500">Real customer ratings breakdown across monitored competitors</p>
+                                </div>
+                                <div class="relative w-full h-64">
+                                    <canvas id="chart-rating-distribution"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Right: Most Discussed Topics Across Competitors -->
+                            <div class="earth-card p-5 sm:p-6 space-y-4">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Topic Ranking & Mentions</h3>
+                                    <p class="text-xs text-sand-500">Most frequent topics extracted from customer reviews</p>
+                                </div>
+                                <div id="review-topic-bars" class="space-y-3">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Negative Topics & Risk Heatmap (PDF Section 11) -->
+                        <div class="earth-card p-5 sm:p-6 space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Negative Topics & Cross-Business Risk Heatmap</h3>
+                                    <p class="text-xs text-sand-500">Recurring customer complaints and issues identified in negative sentiment reviews</p>
+                                </div>
+                                <span class="badge-terracotta text-xs font-semibold px-2.5 py-1 rounded-full">Pain Points</span>
+                            </div>
+                            <div id="negative-topics-heatmap" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 4: POST / CONTENT INTELLIGENCE (PDF Page 5 - Section 12) -->
+                    <div id="module-posts" class="analytics-module space-y-6 hidden">
+                        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            <!-- Posts Monthly Timeline (8 cols) -->
+                            <div class="lg:col-span-8 earth-card p-5 sm:p-6 space-y-4">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Posting Frequency by Month</h3>
+                                    <p class="text-xs text-sand-500">Timeline of updates published across competitors in the last 3 months</p>
+                                </div>
+                                <div class="relative w-full h-64 sm:h-72">
+                                    <canvas id="chart-posts-timeline"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Post Types & Themes (4 cols) -->
+                            <div class="lg:col-span-4 earth-card p-5 sm:p-6 space-y-4">
+                                <div>
+                                    <h3 class="text-base font-bold font-serif text-sand-900">Post Themes & CTAs</h3>
+                                    <p class="text-xs text-sand-500">Distribution of content themes and calls-to-action</p>
+                                </div>
+                                <div class="relative w-full h-52 flex items-center justify-center">
+                                    <canvas id="chart-post-themes"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 5: GEOGRAPHIC INTELLIGENCE (PDF Page 5 - Section 13) -->
+                    <div id="module-geo" class="analytics-module space-y-6 hidden">
+                        <div class="earth-card p-5 sm:p-6 space-y-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="badge-sage text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Page 5</span>
+                                        <h3 class="text-lg font-bold font-serif text-sand-900">Geographic Intelligence & Location Map</h3>
+                                    </div>
+                                    <p class="text-xs text-sand-500 mt-0.5">
+                                        Interactive map plotting competitor physical storefronts in Kharghar, Navi Mumbai with real GPS coordinates
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-1.5 text-xs bg-sand-50 p-1 rounded-xl border border-[#E8E2D8] self-start sm:self-auto">
+                                    <span class="text-sand-500 text-[11px] mr-1">Marker Size:</span>
+                                    <button type="button" id="geo-size-reviews" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white text-sand-900 shadow-2xs">Reviews</button>
+                                    <button type="button" id="geo-size-posts" class="px-2.5 py-1 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900">Posts</button>
+                                    <button type="button" id="geo-size-rating" class="px-2.5 py-1 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900">Rating</button>
+                                </div>
+                            </div>
+
+                            <!-- Leaflet Map Container -->
+                            <div id="geographic-map" class="relative w-full h-80 sm:h-96 rounded-xl border border-[#E8E2D8] z-10"></div>
+
+                            <div id="geo-competitor-distances" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                                <!-- Populated dynamically with distance and zone stats -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 6: SOURCE EXPLORER (PDF Page 5 - 6: The Provenance & Evidence Layer) -->
+                    <div id="module-explorer" class="analytics-module space-y-6 hidden">
+                        <div class="earth-card p-5 sm:p-6 space-y-5">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                                <div>
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="badge-terracotta text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Section 14</span>
+                                        <h3 class="text-lg font-bold font-serif text-sand-900">Source Explorer & Evidence Layer</h3>
+                                    </div>
+                                    <p class="text-xs text-sand-500">
+                                        Every market aggregate metric preserves provenance to its source review or post record on Google Maps
+                                    </p>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                                    <input type="text" id="source-search-input" placeholder="Search text, author, topic..." class="border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3 py-1.5 text-xs text-sand-800 outline-none focus:ring-1 focus:ring-sage-500 w-44 sm:w-56">
+                                    <select id="source-explorer-comp-filter" class="border border-[#E8E2D8] bg-white rounded-xl px-2.5 py-1.5 text-xs text-sand-700 outline-none focus:ring-1 focus:ring-sage-500">
+                                        <option value="all">All Competitors</option>
+                                    </select>
+                                    <select id="source-explorer-type-filter" class="border border-[#E8E2D8] bg-white rounded-xl px-2.5 py-1.5 text-xs text-sand-700 outline-none focus:ring-1 focus:ring-sage-500">
+                                        <option value="all">All Sources (Reviews & Posts)</option>
+                                        <option value="review">Reviews Only</option>
+                                        <option value="post">Posts Only</option>
+                                    </select>
+                                    <select id="source-explorer-sentiment-filter" class="border border-[#E8E2D8] bg-white rounded-xl px-2.5 py-1.5 text-xs text-sand-700 outline-none focus:ring-1 focus:ring-sage-500">
+                                        <option value="all">All Sentiments</option>
+                                        <option value="positive">Positive</option>
+                                        <option value="neutral">Neutral</option>
+                                        <option value="negative">Negative</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Source Explorer Table (Mobile responsive with horizontal touch scroll) -->
+                            <div class="overflow-x-auto -mx-5 px-5 sm:mx-0 sm:px-0 rounded-xl border border-[#E8E2D8]">
+                                <table class="min-w-full divide-y divide-[#E8E2D8] text-xs">
+                                    <thead class="bg-[#FAF8F5]">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Record ID</th>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Competitor</th>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Type / Metric</th>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Content / Snippet</th>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Sentiment</th>
+                                            <th class="px-4 py-3 text-left font-semibold text-sand-600 uppercase tracking-wider">Topic</th>
+                                            <th class="px-4 py-3 text-right font-semibold text-sand-600 uppercase tracking-wider">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="source-explorer-tbody" class="bg-white divide-y divide-[#E8E2D8]">
+                                        <!-- Populated dynamically via JS -->
+                                     </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 7: STRATEGIC MARKET GAPS (Analytics Deep-Dive) -->
+                    <div id="module-gaps" class="analytics-module space-y-6 hidden">
+                        <div class="earth-card p-5 sm:p-6">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                                <div>
+                                    <div class="flex items-center gap-2 mb-1.5">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FCEFEA] text-[#C8684C] border border-[#F3CEC3]">
+                                            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                            Strategic Intelligence
+                                        </span>
+                                        <span class="text-xs text-sand-400 font-medium">Derived from real scraped market data</span>
+                                    </div>
+                                    <h3 class="text-xl font-bold font-serif text-sand-900">Strategic Market Gaps &amp; Counter-Tactics</h3>
+                                    <p class="text-xs text-sand-500 mt-0.5 max-w-2xl">Competitor vulnerabilities identified from sentiment analysis, post activity, and review patterns — with actionable strategies to outperform rivals.</p>
+                                </div>
+                            </div>
+                            <!-- Gap Cards Grid — populated by analytics.js renderAnalyticsMarketGaps() -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-5" id="analytics-market-gaps">
+                                <div class="animate-pulse bg-sand-100 rounded-xl h-56"></div>
+                                <div class="animate-pulse bg-sand-100 rounded-xl h-56"></div>
+                                <div class="animate-pulse bg-sand-100 rounded-xl h-56"></div>
+                                <div class="animate-pulse bg-sand-100 rounded-xl h-56"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODULE 8: TREND ANALYSIS (Section 13) -->
+                    <div id="module-trends" class="analytics-module space-y-5 hidden">
+
+                        <!-- Header card -->
+                        <div class="earth-card p-5 sm:p-6">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                                <div>
+                                    <div class="flex items-center gap-2 mb-1.5">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#EBF2EC] text-[#5E7E62] border border-[#C8DBCB]">
+                                            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                                            Market Trend Intelligence
+                                        </span>
+                                        <span class="text-xs text-sand-400 font-medium">Derived from scraped competitor posts — no brand names</span>
+                                    </div>
+                                    <h3 class="text-xl font-bold font-serif text-sand-900">Topic Trend Analysis</h3>
+                                    <p class="text-xs text-sand-500 mt-0.5 max-w-2xl">How frequently topics appear across competitors, which are rising, and the keyword landscape — to guide your content calendar.</p>
+                                </div>
+                                <div id="trend-meta" class="shrink-0 text-right">
+                                    <!-- populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- Topic Trends Table -->
+                            <div id="trend-topic-table" class="space-y-2">
+                                <div class="animate-pulse space-y-2">
+                                    <div class="h-10 bg-sand-100 rounded-xl"></div>
+                                    <div class="h-10 bg-sand-100 rounded-xl"></div>
+                                    <div class="h-10 bg-sand-100 rounded-xl"></div>
+                                    <div class="h-10 bg-sand-100 rounded-xl"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Keyword cloud + Monthly volume side-by-side -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                            <!-- Keyword Frequency -->
+                            <div class="earth-card p-5">
+                                <h4 class="text-sm font-bold font-serif text-sand-900 mb-1">Keyword Frequency</h4>
+                                <p class="text-xs text-sand-500 mb-4">Most-used content keywords across all competitor posts — brand names excluded</p>
+                                <div id="trend-keyword-cloud" class="flex flex-wrap gap-2">
+                                    <div class="animate-pulse h-6 w-20 bg-sand-100 rounded-full"></div>
+                                    <div class="animate-pulse h-6 w-16 bg-sand-100 rounded-full"></div>
+                                    <div class="animate-pulse h-6 w-24 bg-sand-100 rounded-full"></div>
+                                </div>
+                            </div>
+                            <!-- Monthly Volume -->
+                            <div class="earth-card p-5">
+                                <h4 class="text-sm font-bold font-serif text-sand-900 mb-1">Monthly Post Volume</h4>
+                                <p class="text-xs text-sand-500 mb-4">Total competitor posts per month in the 6-month window</p>
+                                <div id="trend-monthly-bars" class="space-y-2">
+                                    <div class="animate-pulse h-4 bg-sand-100 rounded w-3/4"></div>
+                                    <div class="animate-pulse h-4 bg-sand-100 rounded w-1/2"></div>
+                                    <div class="animate-pulse h-4 bg-sand-100 rounded w-2/3"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========================================== -->
+                <!-- 5. IDEAS VIEW                             -->
+                <!-- ========================================== -->
+                <section id="ideas-view" class="hidden space-y-6 animate-fade-in">
+
+                    <!-- Content Intelligence Panel (populated by ideas.js renderAnalysisSummary) -->
+                    <div class="earth-card p-5 sm:p-6" id="ideas-analysis-panel">
+                        <div class="animate-pulse space-y-3">
+                            <div class="h-4 bg-sand-100 rounded w-1/3"></div>
+                            <div class="grid grid-cols-4 gap-3">
+                                <div class="h-14 bg-sand-100 rounded-xl"></div>
+                                <div class="h-14 bg-sand-100 rounded-xl"></div>
+                                <div class="h-14 bg-sand-100 rounded-xl"></div>
+                                <div class="h-14 bg-sand-100 rounded-xl"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Generate Controls -->
+                    <div class="earth-card p-5 sm:p-6">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-5">
+                            <div>
+                                <h2 class="text-xl font-bold font-serif text-sand-900">AI Post Generator</h2>
+                                <p class="text-xs text-sand-500 mt-0.5">Synthesize competitor intelligence into unique, publication-ready Google Maps posts</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <!-- Quick Count Presets -->
+                                <div class="flex items-center gap-1 bg-[#FAF8F5] border border-[#E8E2D8] rounded-xl p-1 text-xs">
+                                    <span class="text-[11px] text-sand-500 font-medium px-2">Presets:</span>
+                                    <button type="button" class="ideas-preset-btn px-2.5 py-1 rounded-lg font-bold text-sand-700 hover:bg-white hover:text-sand-900 transition-colors" data-count="3">3</button>
+                                    <button type="button" class="ideas-preset-btn px-2.5 py-1 rounded-lg font-bold text-sand-700 hover:bg-white hover:text-sand-900 transition-colors" data-count="10">10</button>
+                                    <button type="button" class="ideas-preset-btn px-2.5 py-1 rounded-lg font-bold text-sand-700 hover:bg-white hover:text-sand-900 transition-colors" data-count="50">50</button>
+                                </div>
+                                <!-- Custom Count input -->
+                                <div class="flex items-center gap-2 bg-[#FAF8F5] border border-[#E8E2D8] rounded-xl px-3 py-1.5">
+                                    <label class="text-xs text-sand-600 font-medium whitespace-nowrap">Count</label>
+                                    <input type="number" id="ideas-count" value="3" min="1" max="50"
+                                           class="w-14 bg-transparent text-xs text-center font-bold text-sand-900 outline-none">
+                                </div>
+                                <!-- Complete post toggle -->
+                                <label class="flex items-center gap-2 cursor-pointer text-xs font-medium text-sand-700 bg-[#FAF8F5] border border-[#E8E2D8] rounded-xl px-3 py-1.5">
+                                    <input type="checkbox" id="complete-update-toggle" class="rounded text-sage-600 focus:ring-sage-500">
+                                    <span>Complete Format</span>
+                                </label>
+                                <!-- Generate button -->
+                                <button id="generate-ideas-btn" class="px-5 py-2 bg-[#B0553B] hover:bg-[#8E3F28] text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-1.5">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                                    Generate Content Ideas
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Loading State -->
+                        <div id="ideas-loading" class="hidden py-8 text-center">
+                            <div class="inline-flex items-center gap-3 px-5 py-2.5 bg-[#EBF2EC] border border-[#C8DBCB] rounded-xl text-xs font-medium text-sage-700">
+                                <div class="w-4 h-4 border-2 border-sage-500 border-t-transparent rounded-full animate-spin"></div>
+                                AI is analyzing competitor data and generating unique posts...
+                            </div>
+                        </div>
+
+                        <!-- Generated Results Grid -->
+                        <div id="ideas-results" class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <!-- Populated by ideas.js -->
+                        </div>
+                    </div>
+
+                    <!-- Previous Ideas Archive -->
+                    <div class="earth-card p-5 sm:p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-base font-bold font-serif text-sand-900">Generated Ideas Archive</h3>
+                                <p class="text-xs text-sand-500 mt-0.5">All previously generated content for this project</p>
+                            </div>
+                        </div>
+                        <div id="previous-ideas" class="space-y-2">
+                            <!-- Populated by ideas.js -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODALS -->
+    <!-- ========================================== -->
+
+    <!-- Quick Add Competitor Modal -->
+    <div id="add-competitor-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white border border-[#E8E2D8] rounded-2xl max-w-md w-full p-6 shadow-xl animate-fade-in max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b border-[#E8E2D8] mb-4">
+                <h3 class="text-lg font-bold font-serif text-sand-900">Add New Competitor</h3>
+                <button id="close-competitor-modal-btn" class="text-sand-400 hover:text-sand-700 text-lg leading-none">&times;</button>
+            </div>
+            <form id="add-competitor-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Competitor Business Name *</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="modal-competitor-name" required placeholder="e.g. Mithaas Sweet" class="flex-1 border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                        <button type="button" id="search-place-btn" class="px-3 py-2 bg-terracotta-500 hover:bg-terracotta-600 text-white text-xs font-semibold rounded-xl shadow-sm whitespace-nowrap" title="Search Google Maps near project location">
+                            Search
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Google Maps Profile URL (Optional)</label>
+                    <div class="flex gap-2">
+                      <input type="url" id="modal-competitor-url" placeholder="https://maps.google.com/..." class="flex-1 border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                      <button type="button" id="resolve-place-btn" class="px-3 py-2 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm whitespace-nowrap" title="Resolve to Google Maps canonical identity">
+                        Resolve
+                      </button>
+                    </div>
+                    <p class="text-[11px] text-sand-500 mt-1">Paste the Google Maps share link to scrape updates automatically.</p>
+                </div>
+                <!-- Search Results Display -->
+                <div id="search-results-display" class="hidden p-3 bg-sage-50 border border-sage-200 rounded-xl space-y-2">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2 text-xs font-semibold text-sage-700">
+                      <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/></svg>
+                      <span>Search Results</span>
+                    </div>
+                    <button type="button" id="clear-search-btn" class="text-sand-400 hover:text-sand-600 text-xs">Clear</button>
+                  </div>
+                  <div id="search-results-list" class="text-[11px] text-sand-600 space-y-2 max-h-48 overflow-y-auto"></div>
+                </div>
+                <!-- Resolved Place Identity Display -->
+                <div id="resolved-place-display" class="hidden p-3 bg-sage-50 border border-sage-200 rounded-xl space-y-2">
+                  <div class="flex items-center gap-2 text-xs font-semibold text-sage-700">
+                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/></svg>
+                    <span>Resolved Identity</span>
+                  </div>
+                  <div id="resolved-place-details" class="text-[11px] text-sand-600 space-y-1"></div>
+                  <input type="hidden" id="resolved-place-key" name="place_key">
+                  <input type="hidden" id="resolved-google-place-id" name="google_place_id">
+                  <input type="hidden" id="resolved-cid" name="cid">
+                  <input type="hidden" id="resolved-hex-id" name="hex_id">
+                </div>
+                <div class="flex justify-end gap-2.5 pt-3">
+                    <button type="button" id="cancel-competitor-modal-btn" class="px-4 py-2 bg-sand-100 hover:bg-sand-200 text-sand-800 text-xs font-semibold rounded-xl">
+                        Cancel
+                    </button>
+                    <button type="submit" id="save-competitor-btn" class="px-4 py-2 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm" disabled>
+                        Save Competitor
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- New Project Modal -->
+    <div id="new-project-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white border border-[#E8E2D8] rounded-2xl max-w-md w-full p-6 shadow-xl animate-fade-in">
+            <div class="flex items-center justify-between pb-3 border-b border-[#E8E2D8] mb-4">
+                <h3 class="text-lg font-bold font-serif text-sand-900">Create New Project</h3>
+                <button id="close-project-modal-btn" class="text-sand-400 hover:text-sand-700 text-lg leading-none">&times;</button>
+            </div>
+            <form id="new-project-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Project Name *</label>
+                    <input type="text" id="modal-project-name" required placeholder="e.g. Downtown Dental Care" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Your Business Profile / Focus (Optional)</label>
+                    <textarea id="modal-project-profile" rows="3" placeholder="Describe your services or location to guide AI suggestions..." class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none"></textarea>
+                </div>
+                <!-- NEW: Location Input -->
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Geographic Location</label>
+                    <input type="text" id="modal-project-location" placeholder="e.g. Kharghar, Navi Mumbai (for local businesses)" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <!-- NEW: Industry Field Input -->
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Industry Field / Category</label>
+                    <input type="text" id="modal-project-field" placeholder="e.g. Hair Salon, Dental Clinic, Fashion Boutique (for online businesses)" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <!-- NEW: Scope Toggle (using radio buttons) -->
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-semibold text-sand-700">Business Scope:</span>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center">
+                            <input type="radio" id="modal-scope-local" name="modal-scope" value="local" checked class="hidden">
+                            <label for="modal-scope-local" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-sage-500 text-white shadow-xs transition-all hover:bg-sage-600 flex items-center gap-1.5 cursor-pointer">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                Local Storefront
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="radio" id="modal-scope-online" name="modal-scope" value="online" class="hidden">
+                            <label for="modal-scope-online" class="px-3 py-1.5 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900 transition-all hover:bg-sand-50 flex items-center gap-1.5 cursor-pointer">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                Online Brand
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2.5 pt-3">
+                    <button type="button" id="cancel-project-modal-btn" class="px-4 py-2 bg-sand-100 hover:bg-sand-200 text-sand-800 text-xs font-semibold rounded-xl">
+                        Cancel
+                    </button>
+                    <button type="submit" id="save-project-btn" class="px-4 py-2 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-xl shadow-sm">
+                        Create Project
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Project Modal -->
+    <div id="edit-project-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white border border-[#E8E2D8] rounded-2xl max-w-md w-full p-6 shadow-xl animate-fade-in max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between pb-3 border-b border-[#E8E2D8] mb-4">
+                <h3 class="text-lg font-bold font-serif text-sand-900">Edit Project Details</h3>
+                <button id="close-edit-project-modal-btn" class="text-sand-400 hover:text-sand-700 text-lg leading-none">&times;</button>
+            </div>
+            <form id="edit-project-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Company / Project Name *</label>
+                    <input type="text" id="edit-project-name" required placeholder="e.g. Downtown Dental Care" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Your Business Profile / Focus (Optional)</label>
+                    <textarea id="edit-project-profile" rows="3" placeholder="Describe your services or location to guide AI suggestions..." class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none"></textarea>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Geographic Location</label>
+                    <input type="text" id="edit-project-location" placeholder="e.g. Kharghar, Navi Mumbai (for local businesses)" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-sand-700 mb-1">Industry Field / Category</label>
+                    <input type="text" id="edit-project-field" placeholder="e.g. Hair Salon, Dental Clinic, Fashion Boutique (for online businesses)" class="w-full border border-[#E8E2D8] bg-[#FAF8F5] rounded-xl px-3.5 py-2 text-xs focus:ring-1 focus:ring-sage-500 outline-none">
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-semibold text-sand-700">Business Scope:</span>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center">
+                            <input type="radio" id="edit-scope-local" name="edit-scope" value="local" class="hidden">
+                            <label for="edit-scope-local" class="px-3 py-1.5 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900 transition-all hover:bg-sand-50 flex items-center gap-1.5 cursor-pointer">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                Local Storefront
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="radio" id="edit-scope-online" name="edit-scope" value="online" class="hidden">
+                            <label for="edit-scope-online" class="px-3 py-1.5 rounded-lg text-xs font-medium text-sand-600 hover:text-sand-900 transition-all hover:bg-sand-50 flex items-center gap-1.5 cursor-pointer">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10z"/></svg>
+                                Online Brand
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2.5 pt-3">
+                    <button type="button" id="cancel-edit-project-btn" class="px-4 py-2 bg-sand-100 hover:bg-sand-200 text-sand-800 text-xs font-semibold rounded-xl">
+                        Cancel
+                    </button>
+                    <button type="submit" id="save-edit-project-btn" class="px-4 py-2 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-xl shadow-sm">
+                        Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Project Confirmation Modal -->
+    <div id="delete-project-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white border border-[#E8E2D8] rounded-2xl max-w-md w-full p-6 shadow-xl animate-fade-in">
+            <div class="flex items-center justify-between pb-3 border-b border-[#E8E2D8] mb-4">
+                <h3 class="text-lg font-bold font-serif text-sand-900">Delete Project</h3>
+                <button id="close-delete-project-modal-btn" class="text-sand-400 hover:text-sand-700 text-lg leading-none">&times;</button>
+            </div>
+            <div class="flex items-start gap-3">
+                <div class="p-2 rounded-xl bg-terracota-100 text-terracota-600 border border-terracota-200 shrink-0">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <div class="text-xs text-sand-600 space-y-2">
+                    <p>
+                        You are about to permanently delete
+                        <span id="delete-project-name" class="font-semibold text-sand-900">this project</span>.
+                    </p>
+                    <p>
+                        Its competitors, collected posts, reviews, keywords, generated ideas and scraping
+                        history are removed with it. Businesses that other projects also track stay untouched.
+                        This action cannot be undone.
+                    </p>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2.5 pt-4">
+                <button type="button" id="cancel-delete-project-btn" class="px-4 py-2 bg-sand-100 hover:bg-sand-200 text-sand-800 text-xs font-semibold rounded-xl">
+                    Cancel
+                </button>
+                <button type="button" id="confirm-delete-project-btn" class="px-4 py-2 bg-terracota-600 hover:bg-terracota-700 text-white text-xs font-semibold rounded-xl shadow-sm">
+                    Delete Project
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/app.js" type="module"></script>
+</body>
+</html>
