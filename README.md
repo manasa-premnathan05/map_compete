@@ -1,187 +1,221 @@
-# MapCompete - Google Maps Competitor Intelligence Tool
+# MapCompete - Google Maps Competitor Intelligence Platform
 
-A web-based competitor intelligence tool focused on Google Maps Updates. The system collects Google Maps update/post data from competitor business profiles, stores the data locally, analyzes what competitors are publishing, identifies recurring topics and trends, and uses the collected repository to generate new Google Maps update ideas and complete draft posts.
+An end-to-end competitive intelligence platform for monitoring Google Maps business updates, analyzing competitor content with AI, and generating high-performing Google Maps posts.
 
-## Features
+## Overview
 
-- **Project Management**: Create and manage multiple projects
-- **Competitor Tracking**: Manually add and manage competitor businesses
-- **Keyword Management**: Add search keywords for discovery
-- **Web Scraping**: Selenium-based scraper for Google Maps posts
-- **Duplicate Detection**: Prevents collecting the same posts multiple times
-- **AI Analysis**: Uses Gemini and Grok AI to analyze competitor posts
-- **Content Generation**: Generate content ideas and complete Google Maps updates
-- **Analytics**: View topic frequency, keyword usage, and competitor activity
-- **Responsive Design**: Works on desktop and mobile devices
-- **CAPTCHA Handling**: Gracefully handles verification challenges
-- **Demo Data**: Pre-loaded dataset for immediate evaluation
+MapCompete automates the full pipeline from competitor discovery to content generation:
 
-## Technology Stack
+1. **Project & Competitor Management** - Create projects, define primary business, track competitors
+2. **Google Maps Discovery** - Search and resolve real Google Maps places with canonical identity
+3. **Updates Scraping** - Extract Google Maps Updates/Posts with 1-year (first scrape) / 6-month (incremental) windows
+4. **Persistent Storage** - Canonical place identity, project relationships, posts, scraping logs
+5. **AI Analysis** - Deep competitor intelligence: topics, keywords, content types, CTAs, offers, frequency, patterns, gaps, trends
+6. **Content Generation** - AI-powered Google Maps update ideas and complete posts with keywords, CTAs, image concepts
+7. **Dashboard & Analytics** - Real-time metrics, charts, geographic map, source explorer, market gaps
 
-### Backend
-- Python 3.11
-- Flask REST API
-- SQLite Database
-- Selenium WebDriver for scraping
-- Gemini AI & Grok AI for analysis and generation
+## Architecture
 
-### Frontend
-- HTML5
-- Tailwind CSS (via CDN)
-- Vanilla JavaScript (no frameworks)
-- Playfair Display & Space Mono fonts
+```
+├── backend/
+│   ├── api.py              # Flask REST API
+│   ├── database.py         # SQLite schema & operations
+│   ├── scraper.py          # Selenium Google Maps scraper
+│   ├── ai_service.py       # AI providers (Groq, Gemini) with fallbacks
+│   └── place_identity.py   # Canonical Google Maps identity resolution
+│
+├── frontend/
+│   ├── index.html          # Single-page application
+│   └── js/
+│       ├── app.js          # Main app router
+│       └── components/     # Dashboard, Competitors, Posts, Analytics, Ideas
+│
+└── database.db             # SQLite database (auto-created)
+```
 
-### DevOps
-- Docker & Docker Compose
-- Nginx for frontend serving
-- Gunicorn for backend serving
+## Key Features
 
-## Installation
+### Canonical Place Identity
+- Every business resolves to one canonical `place` record keyed by Google Maps identity (hex pair, place_id, CID, kgmid)
+- Projects link to places via `project_places` (primary business + competitors)
+- Deduplication across projects using strongest available identity
+
+### Smart Scraping
+- **First scrape**: 365-day window, continuous scrolling until 1-year cutoff
+- **Incremental**: 180-day window, only new posts inserted
+- Deduplication via content hash (URL + text + date + competitor)
+- Status handling: `SUCCESS`, `NO_POSTS`, `CAPTCHA_REQUIRED`, `TIMEOUT`, `FAILED`
+
+### AI Competitive Intelligence
+- **Topics & Sub-topics** with competitor mapping
+- **Content Types**: Offer/Promo, New Arrival, Educational, Event
+- **CTA Analysis** with effectiveness rating
+- **Offer/Promotion Patterns** with examples
+- **Competitor Publishing Patterns** per competitor
+- **Gaps & Opportunities** with impact assessment
+- **Unique Insights** with evidence + actionable recommendations
+
+### Content Generation
+- **Ideas**: Multiple unique Google Maps update ideas with keywords, CTA, image concept
+- **Complete Update**: Ready-to-post text, keywords, CTA, image concept, suggested posting time
+- **Duplicate Prevention** against existing generated ideas
+
+## Quick Start
 
 ### Prerequisites
-- Docker and Docker Compose
-- Git
+- Python 3.9+
+- Chrome/Chromium (for Selenium)
+- Node.js (optional, for frontend dev server)
 
-### Quick Start (Docker)
-1. Clone the repository
-2. Copy `.env.example` to `.env` and fill in your API keys
-3. Run `docker-compose up --build`
-4. Access the application at `http://localhost:3000`
+### Installation
 
-### Manual Installation
-1. Install Python 3.11+ and Node.js (for TailwindCSS build, if desired)
-2. Install backend dependencies: `pip install -r backend/requirements.txt`
-3. Set up environment variables in `.env` file
-4. Start the backend: `python backend/api.py`
-5. Serve the frontend (using any static file server) or open `frontend/index.html` directly
+```bash
+# Clone and enter project
+cd mapcompete
 
-## Usage
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-1. **Create a Project**: Enter your business name and profile information
-2. **Add Competitors**: Manually add competitor businesses with their Google Maps URLs
-3. **Add Keywords** (Optional): Add search terms related to your business
-4. **Start Scraping**: Begin collecting competitor Google Maps posts
-5. **View Results**: Browse collected posts, analyze trends, and generate content ideas
-6. **Generate Content**: Create new Google Maps update ideas based on competitor analysis
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Set environment variables (create .env file)
+cp .env.example .env
+# Edit .env with your API keys:
+# GROQ_API_KEY=your_groq_key
+# GEMINI_API_KEY=your_gemini_key
+
+# Start backend API (port 5000)
+cd backend
+python api.py
+
+# Start frontend (port 3000)
+cd ../frontend
+python -m http.server 3000
+```
+
+### Access
+- Frontend: http://localhost:3000
+- API: http://localhost:5000
+- Health check: http://localhost:5000/api/health
 
 ## API Endpoints
 
 ### Projects
-- `GET /api/projects` - Get all projects
-- `POST /api/projects` - Create new project
-- `GET /api/projects/<id>` - Get specific project
-- `PUT /api/projects/<id>` - Update project
-- `DELETE /api/projects/<id>` - Delete project
+- `GET /api/projects` - List all projects
+- `POST /api/projects` - Create project
+- `GET /api/projects/<id>` - Get project with primary business
+- `GET /api/projects/<id>/places` - Get project's canonical places
 
 ### Competitors
-- `GET /api/projects/<id>/competitors` - Get competitors for project
-- `POST /api/projects/<id>/competitors` - Add competitor
+- `GET /api/projects/<id>/competitors` - List project competitors
+- `POST /api/projects/<id>/competitors` - Add competitor (with verification)
 - `PUT /api/competitors/<id>` - Update competitor
-- `DELETE /api/competitors/<id>` - Delete competitor
+- `DELETE /api/competitors/<id>` - Remove from project
 
-### Keywords
-- `GET /api/projects/<id>/keywords` - Get keywords for project
-- `POST /api/projects/<id>/keywords` - Add keyword
-- `DELETE /api/keywords/<id>` - Delete keyword
-
-### Posts
-- `GET /api/posts` - Get posts (with filtering options)
-- `GET /api/posts/<id>` - Get specific post
+### Discovery
+- `POST /api/projects/<id>/discover-competitors` - Discover competitors
+- `POST /api/places/search` - Search places near location
+- `POST /api/places/resolve` - Resolve place identity
+- `POST /api/competitors/verify` - Verify competitor before adding
 
 ### Scraping
-- `POST /api/projects/<id>/scrape` - Start scraping for project
-- `GET /api/projects/<id>/scraping-logs` - Get scraping logs
+- `POST /api/projects/<id>/scrape` - Scrape all project competitors
+- `POST /api/competitors/<id>/scrape` - Scrape single competitor
+- `GET /api/projects/<id>/scraping-logs` - Get scraping history
 
-### AI Analysis
-- `POST /api/projects/<id>/analyze` - Analyze project posts
+### Posts & Analytics
+- `GET /api/posts` - Get posts (with filters)
+- `GET /api/projects/<id>/analyze` - Run AI analysis
+- `GET /api/projects/<id>/analytics/topics` - Topic frequency
+- `GET /api/projects/<id>/analytics/keywords` - Keyword frequency
+- `GET /api/projects/<id>/scraping-logs` - Scraping history
+
+### AI & Content Generation
+- `POST /api/projects/<id>/analyze` - Run AI competitive analysis
 - `POST /api/projects/<id>/ideas` - Generate content ideas
 - `POST /api/projects/<id>/complete-update` - Generate complete update
+- `GET /api/projects/<id>/generated-ideas` - List generated ideas
 
-### Generated Ideas
-- `GET /api/projects/<id>/generated-ideas` - Get generated ideas
-- `POST /api/generated-ideas/<id>/use` - Mark idea as used
+## Database Schema (Key Tables)
 
-### Analytics
-- `GET /api/projects/<id>/analytics/topics` - Get topic frequency
-- `GET /api/projects/<id>/analytics/keywords` - Get keyword frequency
+| Table | Purpose |
+|-------|---------|
+| `projects` | Project metadata, primary business |
+| `places` | Canonical Google Maps places |
+| `project_places` | Project ↔ Place relationships (role: primary/competitor) |
+| `competitors` | Project-specific competitor tracking |
+| `posts` | Scraped Google Maps posts/updates |
+| `scraping_logs` | Persistent scraping run records |
+| `generated_ideas` | AI-generated content ideas |
+| `post_competitors` | Many-to-many post ↔ competitor |
 
-## Design System
+## AI Providers
 
-### Color Palette
-- Background: `#FFFFFF` (Pure White)
-- Primary Text: `#1A202C` (Dark Slate)
-- Secondary Text: `#4A5568` (Medium Slate)
-- Muted Text: `#718096` (Gray-Blue)
-- Accent: `#CBD5E0` (Soft Gray-Blue)
-- Focus Accent: `#63B3ED` (Muted Pastel Blue)
-- Success: `#68D391` (Muted Green)
-- Warning: `#F6E05E` (Muted Yellow)
-- Border/Light: `#EDF2F7` (Very Light Gray)
+- **Groq** (primary) - llama-3.1-8b-instant, llama-3.3-70b-versatile
+- **Gemini** (fallback) - gemini-1.5-flash, gemini-1.5-pro
+- **Fallback** - Rule-based analysis when no API keys available
 
-### Typography
-- Headers: Playfair Display (Serif)
-- Body/Data: Space Mono (Monospace)
+## Environment Variables
 
-### 3D Elements
-- Single 3D location pin icon in header
-- Subtle elevation effects on cards and buttons
-- Hover lifts and shadow increases for interactive elements
+```env
+# Required for AI features
+GROQ_API_KEY=your_groq_api_key
+GEMINI_API_KEY=your_gemini_api_key
 
-### Layout
-- Asymmetrical split-pane design (sidebar + main content)
-- 8px grid system for spacing
-- Maximum width: 1200px with 24px padding
-- No decorative gradients, animations, or gratuitous motions
+# Optional
+FLASK_ENV=development
+FLASK_DEBUG=1
+```
 
-## Data Model
+## Testing
 
-### Projects
-- id, name, our_profile, created_at
+```bash
+# Run frontend UI verification
+python verify_frontend_ui.py
 
-### Competitors
-- id, project_id, name, gmap_url, added_at
+# Test API endpoints
+cd backend
+python -c "
+import sys; sys.path.insert(0, '.')
+from api import app
+with app.test_client() as c:
+    print(c.get('/api/health').get_json())
+"
+```
 
-### Keywords
-- id, project_id, keyword, added_at
+## Project Structure
 
-### Posts
-- id, competitor_id, post_url, text_content, published_date, scrape_date
-- image_urls (JSON), cta, detected_topic, detected_keywords (JSON)
-- raw_data (JSON), content_hash (for duplicate detection)
-
-### Generated Ideas
-- id, project_id, idea_text, generated_at, used_flag
-
-### Scraping Logs
-- id, project_id, start_time, end_time, competitors_processed
-- posts_found, new_posts, duplicates_skipped, failures, captcha_encountered
-- error_info
-
-## Evaluation & Verification
-
-To verify the implementation:
-
-1. Register for free Gemini API key (Google AI Studio) and Grok API (x.com)
-2. Set environment variables in `.env` file
-3. Run `docker-compose up --build`
-4. Access http://localhost:3000
-5. Create test project, add 2 competitors with known Google Maps profiles
-6. Start scrape, observe logs for CAPTCHA handling
-7. Verify posts appear in database with correct fields
-8. Run analysis, check topic frequencies
-9. Generate 5 ideas, verify uniqueness
-10. Generate complete update, validate all required fields present
-11. Test responsive layout via browser dev tools
-12. Confirm demo dataset loads when DB is empty
+```
+mapcompete/
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── .env.example
+├── backend/
+│   ├── api.py
+│   ├── database.py
+│   ├── scraper.py
+│   ├── ai_service.py
+│   ├── place_identity.py
+│   └── __init__.py
+├── frontend/
+│   ├── index.html
+│   ├── js/
+│   │   ├── app.js
+│   │   └── components/
+│   │       ├── dashboard.js
+│   │       ├── competitors.js
+│   │       ├── posts.js
+│   │       ├── analytics.js
+│   │       ├── ideas.js
+│   │       └── api.js
+│   └── css/
+│       └── (embedded in index.html)
+└── database.db
+```
 
 ## License
 
-This project is created for the Google Maps Competitor Update Intelligence Tool technical examination assignment.
-
-## Acknowledgments
-
-- Tailwind CSS for utility-first CSS framework
-- Playfair Display and Space Mono fonts from Google Fonts
-- Selenium for web automation
-- Gemini and Grok AI for artificial intelligence capabilities
-- Flask for Python web framework
+Proprietary - Internal Use Only
