@@ -246,7 +246,7 @@ export function initDashboard(api) {
       const duplicatesLatestRun = stats.duplicates_skipped_latest_run ?? logs[0]?.duplicates_skipped ?? 0;
       if (duplicatesCountEl) duplicatesCountEl.textContent = duplicatesLatestRun;
       if (topTopicEl) {
-        topTopicEl.textContent = topics[0]?.detected_topic || topics[0]?.topic || posts[0]?.detected_topic || 'New Collection';
+        topTopicEl.textContent = topics[0]?.detected_topic || topics[0]?.topic || posts[0]?.detected_topic || '—';
       }
       const generatedContent = stats.generated_content_count ?? ideas.length;
       if (ideasCountEl) ideasCountEl.textContent = generatedContent;
@@ -657,19 +657,20 @@ export function initDashboard(api) {
       // Extract from posts
       const counts = {};
       posts.forEach(p => {
-        const t = p.detected_topic || 'New Collection';
+        const t = p.detected_topic || 'General Update';
         counts[t] = (counts[t] || 0) + 1;
       });
       displayTopics = Object.keys(counts).map(topic => ({ topic, frequency: counts[topic] }));
     }
 
+    // No scraped topics yet: show an honest hint instead of another
+    // project's demo topics.
     if (displayTopics.length === 0) {
-      displayTopics = [
-        { topic: 'New Collection & Launches', frequency: 7 },
-        { topic: 'Occasion & Party Wear', frequency: 2 },
-        { topic: 'Store & Visit', frequency: 1 },
-        { topic: 'Casual & Streetwear', frequency: 1 }
-      ];
+      topicsListEl.innerHTML = `
+        <p class="text-xs text-sand-500 py-6 text-center">
+          No trending topics yet. Scrape competitors to extract topics from their Google Maps activity.
+        </p>`;
+      return;
     }
 
     const maxCount = Math.max(...displayTopics.map(t => t.frequency || 1), 1);

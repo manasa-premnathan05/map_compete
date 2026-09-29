@@ -843,12 +843,12 @@
                                 <div class="flex items-baseline justify-between mt-2.5">
                                     <div class="flex items-center gap-1.5">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="#D4A373" stroke="#B8824C" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                                        <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-avg-rating">4.5</p>
+                                        <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-avg-rating">—</p>
                                     </div>
                                     <span class="text-xs text-amber-700 font-medium" id="market-rating-basis">Across 4 rivals</span>
                                 </div>
                                 <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
-                                    <div class="h-full bg-amber-500 rounded-full" id="market-rating-bar" style="width: 90%;"></div>
+                                    <div class="h-full bg-amber-500 rounded-full" id="market-rating-bar" style="width: 0%;"></div>
                                 </div>
                             </div>
 
@@ -858,7 +858,7 @@
                                     <span class="badge-sage text-[10px] font-semibold px-2 py-0.5 rounded-full">Indexed</span>
                                 </div>
                                 <div class="flex items-baseline justify-between mt-2.5">
-                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-total-reviews">3,275</p>
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-total-reviews">—</p>
                                     <span class="text-xs text-sage-600 font-medium">Customer voices</span>
                                 </div>
                                 <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
@@ -872,11 +872,11 @@
                                     <span class="badge-sage text-[10px] font-semibold px-2 py-0.5 rounded-full">NLP Scored</span>
                                 </div>
                                 <div class="flex items-baseline justify-between mt-2.5">
-                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-pos-sentiment">76.7%</p>
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-pos-sentiment">—</p>
                                     <span class="text-xs text-sage-600 font-medium">High satisfaction</span>
                                 </div>
                                 <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
-                                    <div class="h-full bg-sage-500 rounded-full" id="market-pos-bar" style="width: 76.7%;"></div>
+                                    <div class="h-full bg-sage-500 rounded-full" id="market-pos-bar" style="width: 0%;"></div>
                                 </div>
                             </div>
 
@@ -886,11 +886,11 @@
                                     <span class="badge-terracotta text-[10px] font-semibold px-2 py-0.5 rounded-full">Negative</span>
                                 </div>
                                 <div class="flex items-baseline justify-between mt-2.5">
-                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-neg-sentiment">16.7%</p>
+                                    <p class="text-2xl sm:text-3xl font-bold font-serif text-sand-900" id="market-neg-sentiment">—</p>
                                     <span class="text-xs text-terracotta-600 font-medium">Pricing / Issues</span>
                                 </div>
                                 <div class="mt-3 h-1.5 w-full bg-sand-100 rounded-full overflow-hidden">
-                                    <div class="h-full bg-terracotta-500 rounded-full" id="market-neg-bar" style="width: 16.7%;"></div>
+                                    <div class="h-full bg-terracotta-500 rounded-full" id="market-neg-bar" style="width: 0%;"></div>
                                 </div>
                             </div>
                         </div>
@@ -918,7 +918,7 @@
                             <div class="lg:col-span-4 earth-card p-5 sm:p-6 space-y-4">
                                 <div>
                                     <h3 class="text-base font-bold font-serif text-sand-900">Market Sentiment Ratio</h3>
-                                    <p class="text-xs text-sand-500">Aggregated sentiment analysis across 30 real reviews</p>
+                                    <p class="text-xs text-sand-500">Aggregated sentiment analysis across scraped customer reviews</p>
                                 </div>
                                 <div class="relative w-full h-52 flex items-center justify-center">
                                     <canvas id="chart-market-sentiment"></canvas>
@@ -926,15 +926,15 @@
                                 <div class="grid grid-cols-3 gap-2 text-center pt-2 border-t border-[#E8E2D8] text-xs">
                                     <div>
                                         <span class="block text-[10px] text-sage-600 font-semibold">Positive</span>
-                                        <span class="font-bold text-sand-800" id="sentiment-pos-count">76.7%</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-pos-count">—</span>
                                     </div>
                                     <div>
                                         <span class="block text-[10px] text-amber-700 font-semibold">Neutral</span>
-                                        <span class="font-bold text-sand-800" id="sentiment-neu-count">6.7%</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-neu-count">—</span>
                                     </div>
                                     <div>
                                         <span class="block text-[10px] text-terracotta-600 font-semibold">Negative</span>
-                                        <span class="font-bold text-sand-800" id="sentiment-neg-count">16.7%</span>
+                                        <span class="font-bold text-sand-800" id="sentiment-neg-count">—</span>
                                     </div>
                                 </div>
                             </div>
@@ -1202,6 +1202,52 @@
                                     <div class="animate-pulse h-4 bg-sand-100 rounded w-2/3"></div>
                                 </div>
                             </div>
+                        </div>
+
+                        <!-- Company Posting Trends: one line per competitor on one graph -->
+                        <div class="earth-card p-5 sm:p-6 space-y-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <h4 class="text-sm font-bold font-serif text-sand-900 mb-1">Company Trend Lines</h4>
+                                    <p class="text-xs text-sand-500">
+                                        Every tracked competitor on the same graph — follow each company's posting trend over the months and
+                                        see which topic it pushed from the start with the dropdown.
+                                    </p>
+                                </div>
+                                <label class="flex items-center gap-2 text-xs text-sand-600 shrink-0">
+                                    <span class="font-semibold">Topic</span>
+                                    <select id="trend-topic-select" class="px-3 py-1.5 rounded-xl border border-[#E8E2D8] bg-white text-xs text-sand-800 focus:outline-none focus:ring-2 focus:ring-sage-200">
+                                        <option value="all">All topics</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="relative w-full h-72 sm:h-80">
+                                <canvas id="chart-trend-lines"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Product-level demand: which EXACT product is trending over time -->
+                        <div class="earth-card p-5 sm:p-6 space-y-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <h4 class="text-sm font-bold font-serif text-sand-900 mb-1">Product Demand Timeline</h4>
+                                    <p class="text-xs text-sand-500">
+                                        Which exact product was talked about each month — e.g. inside
+                                        <span class="font-semibold text-sand-600">Coffee &amp; Beverages</span> you can see which coffee
+                                        (frappe, cold brew, matcha, latte…) gained mentions over time.
+                                    </p>
+                                </div>
+                                <label class="flex items-center gap-2 text-xs text-sand-600 shrink-0">
+                                    <span class="font-semibold">Category</span>
+                                    <select id="trend-product-group-select" class="px-3 py-1.5 rounded-xl border border-[#E8E2D8] bg-white text-xs text-sand-800 focus:outline-none focus:ring-2 focus:ring-sage-200">
+                                        <option value="all">All products</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="relative w-full h-72 sm:h-80">
+                                <canvas id="chart-product-trends"></canvas>
+                            </div>
+                            <div id="trend-product-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1"></div>
                         </div>
                     </div>
                 </section>

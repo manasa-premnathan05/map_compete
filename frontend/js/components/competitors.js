@@ -9,6 +9,13 @@ export function initCompetitors(api) {
   let lastDiscoveredCompetitors = [];
   let currentProjectCompetitors = [];
   let editingCompetitorId = null;
+  // Result chosen in the "Search Google Maps" list. This MUST be the result
+  // object itself (not its index): index 0 is falsy and any index >= 1 has no
+  // `.name`/`.google_maps_url`, which previously made Resolve fail for every
+  // entry except the first one.
+  let selectedSearchResult = null;
+  let selectedSearchResultIndex = null;
+  let lastSearchResults = [];
 
   // Resolve the active project from the shared header switcher at call time.
   // The dashboard rewrites that <select> when a project is created/switched,
@@ -642,6 +649,7 @@ export function initCompetitors(api) {
     const resetModalToAddMode = () => {
       editingCompetitorId = null;
       selectedSearchResult = null;
+      selectedSearchResultIndex = null;
       lastSearchResults = [];
       const titleEl = addCompetitorModal?.querySelector('h3');
       if (titleEl) titleEl.textContent = 'Add New Competitor';
@@ -706,6 +714,7 @@ export function initCompetitors(api) {
             lastSearchResults = result.results;
             // Show search results
             selectedSearchResult = null;
+            selectedSearchResultIndex = null;
             renderSearchResults(result.results);
             if (searchResultsDisplay) searchResultsDisplay.classList.remove('hidden');
             window.showToast?.(`Found ${result.results.length} matching businesses`, 'success');
@@ -727,11 +736,23 @@ export function initCompetitors(api) {
     if (clearSearchBtn) {
       clearSearchBtn.addEventListener('click', () => {
         selectedSearchResult = null;
+        selectedSearchResultIndex = null;
         lastSearchResults = [];
         if (searchResultsDisplay) searchResultsDisplay.classList.add('hidden');
         if (searchResultsList) searchResultsList.innerHTML = '';
       });
     }
+
+    // Typing in the name / URL fields invalidates the previously selected
+    // search result so Resolve and Save use exactly what the user typed.
+    const clearSelectedSearchResult = () => {
+      if (!selectedSearchResult && selectedSearchResultIndex === null) return;
+      selectedSearchResult = null;
+      selectedSearchResultIndex = null;
+      renderSearchResults(lastSearchResults || []);
+    };
+    modalCompetitorName?.addEventListener('input', clearSelectedSearchResult);
+    modalCompetitorUrl?.addEventListener('input', clearSelectedSearchResult);
 
     // Resolve Place button - calls backend to resolve typed name/URL to canonical identity
     if (resolvePlaceBtn) {
@@ -813,9 +834,6 @@ export function initCompetitors(api) {
       });
     }
 
-    let selectedSearchResult = null;
-  let lastSearchResults = [];
-
     // Render search results
     function renderSearchResults(results) {
       if (!searchResultsList) return;
@@ -825,7 +843,7 @@ export function initCompetitors(api) {
         const isStrong = ['place_id', 'hex_id', 'cid', 'kgmid'].includes(identitySource);
         
         return `
-          <div class="search-result-item p-3 bg-white border border-sage-200 rounded-lg cursor-pointer hover:bg-sage-50 transition-colors ${selectedSearchResult === index ? 'border-sage-500 bg-sage-50' : ''}" data-index="${index}">
+          <div class="search-result-item p-3 bg-white border border-sage-200 rounded-lg cursor-pointer hover:bg-sage-50 transition-colors ${selectedSearchResultIndex === index ? 'border-sage-500 bg-sage-50' : ''}" data-index="${index}">
             <div class="flex items-start justify-between gap-2">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1">
@@ -875,9 +893,13 @@ export function initCompetitors(api) {
     }
 
     function selectSearchResult(index, results) {
-      selectedSearchResult = index;
       const result = results[index];
-      
+      // Store the result object itself so Resolve / Add use its real
+      // name + Google Maps URL (storing the bare index broke both for any
+      // entry other than the first one, and index 0 was falsy).
+      selectedSearchResult = result || null;
+      selectedSearchResultIndex = Number.isInteger(index) ? index : null;
+
       // Update UI
       searchResultsList.querySelectorAll('.search-result-item').forEach((item, i) => {
         if (i === index) {
@@ -890,10 +912,11 @@ export function initCompetitors(api) {
       });
       
       // Pre-fill the name and URL with selected result
-      if (modalCompetitorName) modalCompetitorName.value = result.name || '';
-      if (modalCompetitorUrl) modalCompetitorUrl.value = result.google_maps_url || '';
-      
-      window.showToast?.(`Selected: ${result.name}`, 'info');
+      if (result) {
+        if (modalCompetitorName) modalCompetitorName.value = result.name || '';
+        if (modalCompetitorUrl) modalCompetitorUrl.value = result.google_maps_url || '';
+        window.showToast?.(`Selected: ${result.name}`, 'info');
+      }
     }
 
     // Show verification modal before adding custom competitor
@@ -1025,6 +1048,7 @@ export function initCompetitors(api) {
       if (addCompetitorForm) addCompetitorForm.reset();
       editingCompetitorId = null;
       selectedSearchResult = null;
+      selectedSearchResultIndex = null;
       const titleEl = addCompetitorModal?.querySelector('h3');
       if (titleEl) titleEl.textContent = 'Add New Competitor';
       // Clear all displays
@@ -1052,8 +1076,9 @@ export function initCompetitors(api) {
         try {
           const projectId = activeProjectId();
           
-          // First verify the competitor - include selected search result for full details
-          const searchResult = selectedSearchResult !== null ? lastSearchResults[selectedSearchResult] : null;
+          // First verify the competitor - include the selected search result
+          // (object) so the backend receives the full Google Maps details.
+          const searchResult = selectedSearchResult;
           const verification = await api.verifyCompetitor({
             name,
             gmap_url: url,

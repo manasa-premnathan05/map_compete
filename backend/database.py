@@ -28,6 +28,14 @@ except ImportError:  # pragma: no cover - allow running from any cwd
         cid_from_hex,
     )
 
+try:
+    from topic_classifier import extract_products, infer_industry
+except ImportError:  # pragma: no cover - allow running from any cwd
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from topic_classifier import extract_products, infer_industry
+
 class DatabaseManager:
     def __init__(self, db_path: str = "competitor_intelligence.db"):
         self.db_path = db_path
@@ -147,6 +155,34 @@ class DatabaseManager:
             )
         ''')
 
+        # Reviews table — real Google Maps reviews captured while scraping.
+        # Powers the review-intelligence module (rating distribution, review
+        # volume, topic ranking, negative-topic heatmap).
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                competitor_id INTEGER NOT NULL,
+                author TEXT,
+                rating INTEGER,
+                relative_date TEXT,
+                review_date TEXT,
+                text_content TEXT,
+                sentiment TEXT,
+                sentiment_score REAL,
+                detected_topic TEXT,
+                detected_keywords TEXT,
+                source_url TEXT,
+                content_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (competitor_id) REFERENCES competitors(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_reviews_project ON reviews(project_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_reviews_competitor ON reviews(competitor_id)')
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_hash ON reviews(content_hash)')
+
         # Generated ideas table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS generated_ideas (
@@ -228,6 +264,9 @@ class DatabaseManager:
             # fresh databases get them too (competitor listings select them).
             'rating': 'REAL',
             'review_count': 'INTEGER',
+            # JSON aggregate of the Google Maps star breakdown
+            # ({"5": 548, "4": 157, ...}) captured while scraping.
+            'rating_distribution': 'TEXT',
         },
         'places': {
             'identity_source': 'TEXT',
@@ -258,6 +297,11 @@ class DatabaseManager:
             'content_hash': 'TEXT',
             'canonical_post_id': 'INTEGER',
             'post_source': "TEXT DEFAULT 'owner'",
+        },
+        'reviews': {
+            # Added with review scraping: dedupes re-scraped reviews so a
+            # second scrape run never doubles the review analytics.
+            'content_hash': 'TEXT',
         },
         'generated_ideas': {
             'used_flag': 'BOOLEAN DEFAULT 0',
@@ -1540,6 +1584,55 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def update_competitor_stats(self, competitor_id: int, rating=None, review_count=None,
+                                address: str = None, category: str = None,
+                                rating_distribution=None, last_scraped=None) -> bool:
+        """Persist the Google Maps profile statistics captured while scraping.
+
+        The review-volume / rating comparison charts read
+        ``competitors.review_count`` and ``competitors.rating``; without this
+        every competitor bar stays at zero even though the listing has
+        thousands of reviews. Only non-``None`` values are written so a partial
+        read never erases earlier good data.
+        """
+        updates = []
+        params = []
+        if rating is not None:
+            updates.append('rating = ?')
+            params.append(float(rating))
+        if review_count is not None:
+            updates.append('review_count = ?')
+            params.append(int(review_count))
+        if address:
+            updates.append('address = ?')
+            params.append(address)
+        if category:
+            updates.append('category = ?')
+            params.append(category)
+        if rating_distribution:
+            updates.append('rating_distribution = ?')
+            params.append(json.dumps(rating_distribution))
+        if last_scraped is not None:
+            updates.append('last_scraped = ?')
+            params.append(last_scraped)
+
+        if not updates:
+            return False
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            params.append(competitor_id)
+            cursor.execute(
+                f'UPDATE competitors SET {", ".join(updates)} WHERE id = ?',
+                params,
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+
     def _merge_competitors(self, cursor, keep_id: int, drop_id: int) -> int:
         """Fold a duplicate competitor row into the kept one (posts included)."""
         if not keep_id or not drop_id or keep_id == drop_id:
@@ -2189,6 +2282,66 @@ class DatabaseManager:
         return keywords
 
     # Reviews and Market Intelligence operations (PDF Spec Compliance)
+    def add_review(self, project_id: int, competitor_id: int, review_data: Dict) -> Optional[int]:
+        """Persist one scraped Google Maps review.
+
+        Duplicate reviews (same competitor + author + text) are skipped via a
+        SHA-256 content hash so repeated scrape runs never double the review
+        analytics. Returns the new row id, or ``None`` for a duplicate.
+        """
+        import hashlib
+
+        text = (review_data.get('text_content') or '').strip()
+        if not text:
+            return None
+
+        author = (review_data.get('author') or '').strip() or None
+        review_date = review_data.get('review_date') or review_data.get('published_date')
+        content_hash = hashlib.sha256(
+            f"{competitor_id}|{(author or '').lower()}|{(text or '')[:400]}".encode('utf-8')
+        ).hexdigest()[:40]
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT id FROM reviews WHERE content_hash = ?', (content_hash,))
+            existing = cursor.fetchone()
+            if existing:
+                return None
+
+            keywords = review_data.get('detected_keywords') or []
+            if not isinstance(keywords, str):
+                keywords = json.dumps(keywords)
+
+            cursor.execute('''
+                INSERT INTO reviews (
+                    project_id, competitor_id, author, rating, relative_date,
+                    review_date, text_content, sentiment, sentiment_score,
+                    detected_topic, detected_keywords, source_url, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                project_id,
+                competitor_id,
+                author,
+                review_data.get('rating'),
+                review_data.get('relative_date'),
+                review_date,
+                text[:5000],
+                review_data.get('sentiment'),
+                review_data.get('sentiment_score'),
+                review_data.get('detected_topic'),
+                keywords,
+                review_data.get('source_url'),
+                content_hash,
+            ))
+            review_id = cursor.lastrowid
+            conn.commit()
+            return review_id
+        except sqlite3.IntegrityError:
+            return None
+        finally:
+            conn.close()
+
     def get_reviews(self, project_id: int, competitor_id: Optional[int] = None,
                     sentiment: Optional[str] = None, topic: Optional[str] = None,
                     rating: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[Dict]:
@@ -2236,10 +2389,10 @@ class DatabaseManager:
     def get_market_overview(self, project_id: int) -> Dict:
         conn = self.get_connection()
         cursor = conn.cursor()
-        
-        # 1. Competitor profile stats
+
+        # 1. Competitor profile stats (real scraped Google Maps values only)
         cursor.execute('''
-            SELECT 
+            SELECT
                 COUNT(*) as comp_count,
                 AVG(rating) as avg_rating,
                 SUM(review_count) as total_reviews
@@ -2247,7 +2400,7 @@ class DatabaseManager:
             WHERE project_id = ?
         ''', (project_id,))
         p_row = dict(cursor.fetchone() or {})
-        
+
         # 2. Real post count from posts table
         cursor.execute('''
             SELECT COUNT(*) FROM posts p
@@ -2255,10 +2408,13 @@ class DatabaseManager:
             WHERE c.project_id = ?
         ''', (project_id,))
         actual_posts = cursor.fetchone()[0]
-        
-        # 3. Sentiment breakdown from reviews table
+
+        # 3. Sentiment breakdown from reviews table (captured by scraping).
+        #    No review rows yet => no percentages. The UI shows an empty state
+        #    instead of a fabricated baseline, so a project never displays
+        #    another company's data.
         cursor.execute('''
-            SELECT 
+            SELECT
                 sentiment,
                 COUNT(*) as count
             FROM reviews
@@ -2267,22 +2423,22 @@ class DatabaseManager:
         ''', (project_id,))
         sentiment_counts = {r['sentiment']: r['count'] for r in [dict(row) for row in cursor.fetchall()]}
         total_rev_sampled = sum(sentiment_counts.values())
-        avg_rating = p_row.get('avg_rating') or 4.3
+        # AVG ignores NULL ratings; keep None when nothing was scraped yet.
+        avg_rating = p_row.get('avg_rating')
 
+        pos_pct = neg_pct = neu_pct = None
         if total_rev_sampled > 0:
             pos_pct = round((sentiment_counts.get('Positive', 0) / total_rev_sampled) * 100, 1)
             neg_pct = round((sentiment_counts.get('Negative', 0) / total_rev_sampled) * 100, 1)
             neu_pct = round((sentiment_counts.get('Neutral', 0) / total_rev_sampled) * 100, 1)
-        else:
-            # Dynamic rating-derived market sentiment baseline when reviews table is not yet populated
-            if avg_rating >= 4.5:
-                pos_pct, neg_pct, neu_pct = 78.5, 14.5, 7.0
-            elif avg_rating >= 4.0:
-                pos_pct, neg_pct, neu_pct = 72.0, 18.0, 10.0
-            else:
-                pos_pct, neg_pct, neu_pct = 60.0, 25.0, 15.0
-        
-        # 4. Top discussion topic (from reviews)
+
+        # 4. Total reviews: real Google Maps review volumes first, then the
+        #    number of reviews captured by the scraper. Never a demo constant.
+        total_reviews = p_row.get('total_reviews')
+        if not total_reviews:
+            total_reviews = total_rev_sampled or 0
+
+        # 5. Top discussion topic (from reviews)
         cursor.execute('''
             SELECT detected_topic, COUNT(*) as count
             FROM reviews
@@ -2291,9 +2447,9 @@ class DatabaseManager:
             ORDER BY count DESC LIMIT 1
         ''', (project_id,))
         top_topic_row = cursor.fetchone()
-        top_discussion_topic = top_topic_row[0] if top_topic_row else 'Staff & Service'
-        
-        # 5. Top negative topic (from reviews where sentiment = 'Negative')
+        top_discussion_topic = top_topic_row[0] if top_topic_row else None
+
+        # 6. Top negative topic (from reviews where sentiment = 'Negative')
         cursor.execute('''
             SELECT detected_topic, COUNT(*) as count
             FROM reviews
@@ -2302,31 +2458,49 @@ class DatabaseManager:
             ORDER BY count DESC LIMIT 1
         ''', (project_id,))
         top_neg_row = cursor.fetchone()
-        top_negative_topic = top_neg_row[0] if top_neg_row else 'Pricing & Discounts'
-        
-        # 6. Competitor details with place coords for scatter & map
-        # Competitors with 0 reviews AND 0 posts are STRICTLY sorted to the LAST positions
+        top_negative_topic = top_neg_row[0] if top_neg_row else None
+
+        # 7. Competitor details with place coords for scatter & map.
+        #    `review_count` falls back to the number of reviews captured for
+        #    that competitor so the chart still reflects scraped data when the
+        #    listing metadata has not been refreshed yet.
+        #    Competitors with 0 reviews AND 0 posts are STRICTLY sorted LAST.
         cursor.execute('''
             SELECT c.id, c.name, c.rating, c.review_count, c.post_count, c.address, c.gmap_url,
-                   p.latitude, p.longitude, p.google_place_id
+                   p.latitude, p.longitude, p.google_place_id,
+                   COALESCE(c.review_count, rc.captured_reviews, 0) AS effective_review_count,
+                   COALESCE(rc.captured_reviews, 0) AS captured_reviews
             FROM competitors c
             LEFT JOIN places p ON c.place_id = p.id
+            LEFT JOIN (
+                SELECT competitor_id, COUNT(*) AS captured_reviews
+                FROM reviews
+                WHERE project_id = ?
+                GROUP BY competitor_id
+            ) rc ON rc.competitor_id = c.id
             WHERE c.project_id = ?
-            ORDER BY 
-                CASE 
-                    WHEN COALESCE(c.rating, 0) > 0 AND (COALESCE(c.review_count, 0) > 0 OR COALESCE(c.post_count, 0) > 0) THEN 1 
-                    ELSE 0 
+            ORDER BY
+                CASE
+                    WHEN COALESCE(c.rating, 0) > 0 AND (COALESCE(c.review_count, rc.captured_reviews, 0) > 0 OR COALESCE(c.post_count, 0) > 0) THEN 1
+                    ELSE 0
                 END DESC,
-                (COALESCE(c.review_count, 0) * COALESCE(c.rating, 1.0)) DESC,
+                (COALESCE(c.review_count, rc.captured_reviews, 0) * COALESCE(c.rating, 1.0)) DESC,
                 COALESCE(c.post_count, 0) DESC,
                 c.id ASC
-        ''', (project_id,))
-        competitors = [dict(r) for r in cursor.fetchall()]
-        
+        ''', (project_id, project_id))
+        competitors = []
+        for row in cursor.fetchall():
+            competitor = dict(row)
+            # The charts read `review_count`; expose the effective (scraped)
+            # number while keeping the raw listing metadata fields intact.
+            if not competitor.get('review_count'):
+                competitor['review_count'] = competitor.get('captured_reviews') or 0
+            competitors.append(competitor)
+
         conn.close()
         return {
-            "market_avg_rating": round(avg_rating, 2),
-            "total_reviews": p_row.get('total_reviews') or (total_rev_sampled if total_rev_sampled > 0 else 3275),
+            "market_avg_rating": round(avg_rating, 2) if avg_rating is not None else None,
+            "total_reviews": total_reviews,
             "total_posts": actual_posts,
             "competitor_count": p_row.get('comp_count') or len(competitors),
             "positive_sentiment_pct": pos_pct,
@@ -2359,7 +2533,32 @@ class DatabaseManager:
             ORDER BY rating DESC
         ''', (project_id,))
         rating_dist = {str(r['rating']): r['count'] for r in [dict(row) for row in cursor.fetchall()]}
-        
+
+        # No individual reviews stored yet: fall back to the real star
+        # breakdown scraped from each competitor's Google Maps listing
+        # (aggregate counts only, never demo numbers).
+        if not rating_dist:
+            try:
+                cursor.execute('''
+                    SELECT rating_distribution
+                    FROM competitors
+                    WHERE project_id = ? AND rating_distribution IS NOT NULL
+                ''', (project_id,))
+                aggregate = {}
+                for row in cursor.fetchall():
+                    try:
+                        distribution = json.loads(row['rating_distribution'] or '{}')
+                    except Exception:
+                        continue
+                    for star, count in (distribution or {}).items():
+                        try:
+                            aggregate[str(int(star))] = aggregate.get(str(int(star)), 0) + int(count)
+                        except (TypeError, ValueError):
+                            continue
+                rating_dist = aggregate
+            except Exception:
+                rating_dist = rating_dist
+
         # 3. Topic ranking with competitor contributions
         cursor.execute('''
             SELECT 
@@ -2414,75 +2613,279 @@ class DatabaseManager:
         }
 
     def get_market_gaps(self, project_id: int) -> List[Dict]:
-        """Synthesize actionable competitor vulnerabilities, friction points, and market gaps for this project."""
+        """Synthesize market gaps from **real scraped data only**.
+
+        Every card is derived from captured Google Maps values (ratings,
+        review counts, scraped reviews and posts). If a project has no data for
+        a signal, that card is omitted — the UI would otherwise show invented
+        complaints ("30-minute queue delays", "+28% conversion") for a project
+        that has no negative reviews at all.
+        """
         overview = self.get_market_overview(project_id)
         analytics = self.get_review_analytics(project_id)
-        competitors = overview.get('competitors', [])
-        
-        # Analyze active vs inactive competitors
-        active_comps = [c for c in competitors if (c.get('review_count') or 0) > 0 or (c.get('post_count') or 0) > 0]
-        low_publishers = [c['name'] for c in competitors if (c.get('post_count') or 0) < 3]
-        
-        # Identify top complaints from negative reviews
-        negative_topics = analytics.get('negative_topics', [])
-        top_complaint = negative_topics[0]['topic'] if negative_topics else 'Pricing & Service Friction'
-        top_neg_comps = list(negative_topics[0]['competitors'].keys()) if negative_topics and 'competitors' in negative_topics[0] else [c['name'] for c in active_comps[:2]]
+        competitors = overview.get('competitors', []) or []
+        gaps: List[Dict] = []
 
-        # Quality leader vs others
-        quality_leaders = [c['name'] for c in active_comps if (c.get('rating') or 0) >= 4.5 and (c.get('review_count') or 0) >= 50]
-        leader_name = quality_leaders[0] if quality_leaders else (active_comps[0]['name'] if active_comps else "Market Rival")
+        if not competitors and not (analytics.get('topics') or []):
+            return gaps
 
-        gaps = [
-            {
+        # ---------- 1. Real negative-review friction (only when captured) ----
+        negative_topics = analytics.get('negative_topics', []) or []
+        if negative_topics:
+            top_complaint = negative_topics[0]
+            topic = top_complaint.get('topic') or 'Negative feedback'
+            affected = list((top_complaint.get('competitors') or {}).keys())
+            complaint_count = top_complaint.get('count') or 0
+
+            quote = ''
+            for review in self.get_reviews(project_id, sentiment='Negative', limit=1):
+                text = (review.get('text_content') or '').strip().replace('\n', ' ')
+                if text:
+                    quote = text[:160]
+                    break
+
+            weakness = (
+                f"{complaint_count} captured negative review(s) mention "
+                f"'{topic}'"
+                + (f" — main sources: {', '.join(affected[:3])}." if affected else '.')
+            )
+            if quote:
+                weakness += f' Example: "{quote}"'
+
+            gaps.append({
                 "id": "gap-policy-friction",
-                "title": f"Customer Friction & Complaints in {top_complaint}",
+                "title": f"Customer Friction & Complaints in {topic}",
                 "category": "Customer Sentiment Deficit",
                 "icon_type": "shield-alert",
                 "badge": "Critical Opportunity",
                 "badge_color": "terracotta",
-                "competitor_weakness": f"Customer sentiment reveals repeated negative complaints regarding '{top_complaint}' across rivals ({', '.join(top_neg_comps[:2]) or 'active competitors'}). Customers frequently express frustration over inflexible store policies and staff friction.",
-                "actionable_strategy": "Promote a prominent 100% Satisfaction & Flexible Exchange guarantee across all Google Maps posts and business profile attributes. Turn rivals' primary complaint into your core marketing hook.",
-                "expected_impact": "+28% Direct Conversion from Displeased Local Shoppers",
-                "affected_competitors": top_neg_comps[:3] if top_neg_comps else [c['name'] for c in active_comps[:2]]
-            },
-            {
+                "competitor_weakness": weakness,
+                "actionable_strategy": (
+                    f"Address the '{topic}' complaints head-on in your Google Maps "
+                    "posts and profile: publish the guarantee, policy or service "
+                    "change that removes that exact friction for customers."
+                ),
+                "expected_impact": "Convert dissatisfied rival customers into first-time visitors",
+                "affected_competitors": affected[:3],
+            })
+        # ---------- 2. Publishing cadence (real captured post counts) --------
+        low_publishers = [
+            c['name'] for c in competitors if int(c.get('post_count') or 0) < 3
+        ]
+        if competitors and low_publishers:
+            leader_posts = max(
+                (int(c.get('post_count') or 0) for c in competitors), default=0
+            )
+            top_publishers = sorted(
+                competitors, key=lambda c: int(c.get('post_count') or 0), reverse=True
+            )[:2]
+            top_names = ', '.join(
+                f"{c['name']} ({int(c.get('post_count') or 0)} posts)" for c in top_publishers
+            )
+            gaps.append({
                 "id": "gap-content-cadence",
                 "title": "Google Maps Content Publishing Vacuum",
                 "category": "Organic Visibility Void",
                 "icon_type": "flame",
                 "badge": "High Impact",
                 "badge_color": "amber",
-                "competitor_weakness": f"{len(low_publishers)} out of {len(competitors)} tracked competitors ({', '.join(low_publishers[:3]) if low_publishers else 'Inactive rivals'}) publish fewer than 3 updates per month. Rivals leave their Google Business profiles stagnant between seasonal spikes.",
-                "actionable_strategy": "Establish a consistent 2x weekly publishing cadence featuring 'New Arrivals', 'Behind the Scenes', and time-limited 'Local Exclusive' offers with active CTAs to dominate the Google Maps local feed.",
-                "expected_impact": "+42% Profile Discovery Impressions & Maps Carousel Dominance",
-                "affected_competitors": low_publishers[:4]
-            },
-            {
-                "id": "gap-checkout-bottlenecks",
-                "title": "Peak-Hour Wait Time & Service Bottlenecks",
-                "category": "Operational Arbitrage",
-                "icon_type": "clock",
+                "competitor_weakness": (
+                    f"{len(low_publishers)} of {len(competitors)} tracked competitors "
+                    f"have fewer than 3 captured Google Maps updates "
+                    f"({', '.join(low_publishers[:3])}"
+                    + ("…)" if len(low_publishers) > 3 else ")")
+                    + f". Most active so far: {top_names}."
+                ),
+                "actionable_strategy": (
+                    "Publish consistently (e.g. 2x weekly) with offers and updates; "
+                    f"out-posting the busiest rival ({leader_posts} captured posts) "
+                    "puts your profile in front of local searchers first."
+                ),
+                "expected_impact": f"Out-publish {len(low_publishers)} less active rival(s) on the Google Maps feed",
+                "affected_competitors": low_publishers[:4],
+            })
+
+        # ---------- 3. Rating quality gap (real scraped ratings) -------------
+        rated = [c for c in competitors if c.get('rating') is not None]
+        if len(rated) >= 2:
+            weakest = min(rated, key=lambda c: float(c['rating']))
+            strongest = max(rated, key=lambda c: float(c['rating']))
+            market_avg = overview.get('market_avg_rating')
+            gaps.append({
+                "id": "gap-rating-quality",
+                "title": f"Rating Quality Gap vs {weakest['name']}",
+                "category": "Local Trust Deficit",
+                "icon_type": "trending-up",
                 "badge": "Competitive Edge",
                 "badge_color": "sage",
-                "competitor_weakness": "High-traffic rivals experience severe billing congestion and slow weekend turnover. Customer reviews report up to 30-minute queue delays during peak shopping windows.",
-                "actionable_strategy": "Highlight express service, priority checkout, or personal appointment booking via Google Maps CTA ('Book Priority Fitting / Express Assistance').",
-                "expected_impact": "Capture 15–20% of High-Intent Shoppers during Peak Hours",
-                "affected_competitors": [c['name'] for c in active_comps if (c.get('review_count') or 0) > 300][:2] or ([active_comps[0]['name']] if active_comps else ["High Volume Stores"])
-            },
-            {
-                "id": "gap-social-proof-velocity",
-                "title": "Social Proof & Review Acquisition Velocity Deficit",
-                "category": "Local SEO Authority",
-                "icon_type": "trending-up",
+                "competitor_weakness": (
+                    f"{weakest['name']} sits at {float(weakest['rating']):.1f}★ "
+                    f"({int(weakest.get('review_count') or 0):,} reviews) against a "
+                    f"tracked-market average of {market_avg if market_avg is not None else 'n/a'}★"
+                    + (
+                        f", while {strongest['name']} leads at {float(strongest['rating']):.1f}★."
+                        if strongest['id'] != weakest['id'] else '.'
+                    )
+                ),
+                "actionable_strategy": (
+                    f"Lift visible trust above {float(weakest['rating']):.1f}★: showcase "
+                    "five-star service stories, refresh photos, and answer every review "
+                    "so your profile reads better than the weakest tracked rival."
+                ),
+                "expected_impact": f"Out-rank {weakest['name']} ({float(weakest['rating']):.1f}★) on local trust signals",
+                "affected_competitors": [weakest['name']],
+            })
+
+        # ---------- 4. Review evidence coverage (real captured review rows) --
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                SELECT c.name,
+                       COUNT(r.id) AS captured_reviews
+                FROM competitors c
+                LEFT JOIN reviews r ON r.competitor_id = c.id
+                WHERE c.project_id = ?
+                GROUP BY c.id
+            ''', (project_id,))
+            review_rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        missing_reviews = [r['name'] for r in review_rows if not r['captured_reviews']]
+        total_reviews = sum(int(r['captured_reviews'] or 0) for r in review_rows)
+        competitors_with_reviews = len(review_rows) - len(missing_reviews)
+
+        if review_rows and missing_reviews:
+            gaps.append({
+                "id": "gap-review-evidence",
+                "title": "Review Evidence Coverage Gap",
+                "category": "Data Coverage",
+                "icon_type": "clock",
                 "badge": "Quick Win",
                 "badge_color": "sage",
-                "competitor_weakness": f"While leading rivals like {leader_name} hold steady ratings, their monthly review acquisition velocity is low (under 5 new reviews/mo). Inactive storefronts have near zero verified recency.",
-                "actionable_strategy": "Deploy automated post-purchase SMS / QR review prompts with keyword guidance ('quality', 'service', 'fit') to generate 20+ verified monthly reviews and outrank rivals in the Local 3-Pack.",
-                "expected_impact": "Rank #1 in Google Maps Local Pack for Primary Category Keywords",
-                "affected_competitors": [leader_name] if leader_name else ["Market Leaders"]
-            }
-        ]
+                "competitor_weakness": (
+                    f"{total_reviews} review(s) captured for {competitors_with_reviews} "
+                    f"of {len(review_rows)} competitors; no reviews captured yet for "
+                    f"{len(missing_reviews)} ({', '.join(missing_reviews[:3])}"
+                    + ("…)" if len(missing_reviews) > 3 else ")")
+                    + "."
+                ),
+                "actionable_strategy": (
+                    "Re-scrape the competitors without captured reviews so sentiment, "
+                    "rating distribution and complaint analysis cover the whole market "
+                    "before deciding the next campaign."
+                ),
+                "expected_impact": "Complete review intelligence across every tracked competitor",
+                "affected_competitors": missing_reviews[:4],
+            })
+
         return gaps
+
+    def _product_trends_for_project(self, project_id: int) -> Dict:
+        """Which EXACT products are mentioned over time (posts + reviews).
+
+        Products are extracted with the project's industry vocabulary, so a
+        cafe project gets espresso/frappe/cold brew while a fashion project
+        gets shirts/jeans/blazers. Unlike the post-based charts this works for
+        projects whose evidence lives in captured reviews (no owner posts):
+        the monthly timeline is built from both sources.
+        """
+        import collections
+        from datetime import datetime
+
+        def month_label(value):
+            if not value:
+                return None
+            try:
+                return datetime.fromisoformat(str(value)[:10]).strftime('%b %Y')
+            except Exception:
+                return None
+
+        project_row = self.get_project(project_id) or {}
+        industry = infer_industry(
+            project_row.get('field'), project_row.get('our_profile')
+        )
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                SELECT comp.name AS comp_name, p.published_date AS event_date,
+                       p.text_content AS text
+                FROM posts p
+                JOIN competitors comp ON comp.id = p.competitor_id
+                WHERE comp.project_id = ?
+                UNION ALL
+                SELECT comp.name AS comp_name, r.review_date AS event_date,
+                       r.text_content AS text
+                FROM reviews r
+                JOIN competitors comp ON comp.id = r.competitor_id
+                WHERE r.project_id = ?
+            ''', (project_id, project_id))
+            sources = []
+            for row in cursor.fetchall():
+                label = month_label(row['event_date'])
+                if label and row['text']:
+                    sources.append((row['comp_name'], label, row['text']))
+        finally:
+            conn.close()
+
+        month_order = []
+        seen_months = set()
+        for _, label, _ in sources:
+            if label not in seen_months:
+                seen_months.add(label)
+                month_order.append(label)
+        month_order.sort(key=lambda m: datetime.strptime(m, '%b %Y'))
+
+        product_months = collections.defaultdict(collections.Counter)
+        product_group = {}
+        product_competitors = collections.defaultdict(set)
+        for comp_name, label, text in sources:
+            for group, product in extract_products(text, industry):
+                product_months[product][label] += 1
+                product_group.setdefault(product, group)
+                product_competitors[product].add(comp_name)
+
+        trends = []
+        for product, months_counter in product_months.items():
+            data = [months_counter.get(month, 0) for month in month_order]
+            half = len(data) // 2
+            first_half = sum(data[:half]) if half > 0 else 0
+            second_half = sum(data[half:])
+            if first_half == 0 and second_half > 0:
+                direction = 'rising'
+            elif second_half > first_half * 1.2:
+                direction = 'rising'
+            elif first_half > second_half * 1.2:
+                direction = 'falling'
+            else:
+                direction = 'stable'
+
+            active_months = [
+                month_order[index] for index, value in enumerate(data) if value
+            ]
+            trends.append({
+                'product': product,
+                'group': product_group.get(product, 'Other'),
+                'occurrence': sum(data),
+                'competitors_using': len(product_competitors[product]),
+                'data': data,
+                'first_month': active_months[0] if active_months else None,
+                'last_month': active_months[-1] if active_months else None,
+                'trend_direction': direction,
+            })
+
+        trends.sort(
+            key=lambda item: (item['occurrence'], item['competitors_using']),
+            reverse=True,
+        )
+        return {
+            'product_trends': trends[:30],
+            'product_groups': sorted({product_group[p] for p in product_months}),
+            'product_months': month_order,
+        }
 
     def get_trend_analysis(self, project_id: int) -> Dict:
         """Analyse topic and keyword trends across all competitor posts for a project.
@@ -2505,13 +2908,24 @@ class DatabaseManager:
             rows = cursor.fetchall()
 
             if not rows:
-                return {
+                # No owner posts at all: the topic/keyword/company charts have
+                # nothing to show, but products can still be tracked from the
+                # captured reviews (most projects' evidence lives there).
+                empty_payload = {
                     'topic_trends': [],
                     'keyword_trends': [],
-                    'monthly_trends': {},
+                    'monthly_volume': {},
+                    'months': [],
+                    'competitor_monthly': [],
+                    'topic_competitor_monthly': [],
+                    'product_trends': [],
+                    'product_groups': [],
+                    'product_months': [],
                     'total_posts': 0,
                     'total_competitors': 0
                 }
+                empty_payload.update(self._product_trends_for_project(project_id))
+                return empty_payload
 
             # --- Brand word blocklist (competitor names & collection terms → don't show as keywords) ---
             import re as _re
@@ -2653,10 +3067,81 @@ class DatabaseManager:
                     except Exception:
                         pass
 
+            # --- Per-competitor monthly series (trend line chart) ---
+            # One line per competitor on the same graph, newest month last.
+            # Posts without a parsed date cannot be placed on a timeline and
+            # are excluded (they are also skipped when scraping).
+            monthly_by_competitor = collections.OrderedDict()
+            topic_competitor_months = collections.defaultdict(
+                lambda: collections.defaultdict(collections.Counter)
+            )
+            ordered_months = []
+            seen_months = set()
+
+            def _month_label(raw_date):
+                try:
+                    dt = datetime.fromisoformat(str(raw_date)[:10])
+                except Exception:
+                    return None
+                return dt.strftime('%b %Y')
+
+            # Sort rows by parsed date so the month axis is chronological.
+            dated_rows = []
+            for row in rows:
+                date_str = row[4]
+                label = _month_label(date_str) if date_str else None
+                if not label:
+                    continue
+                dated_rows.append((row, label))
+            dated_rows.sort(key=lambda item: (datetime.fromisoformat(str(item[0][4])[:10]), item[0][0]))
+
+            for row, label in dated_rows:
+                comp_name = row[0]
+                topic = row[2] or 'General Update'
+                monthly_by_competitor.setdefault(comp_name, collections.Counter())[label] += 1
+                topic_competitor_months[topic][comp_name][label] += 1
+                if label not in seen_months:
+                    seen_months.add(label)
+                    ordered_months.append(label)
+
+            # --- Product-level demand over time ---------------------------
+            # Which EXACT product was talked about each month (e.g. which
+            # coffee: frappe, cold brew, matcha, hazelnut...) - extracted from
+            # the scraped posts AND reviews with the industry vocabulary.
+            product_payload = self._product_trends_for_project(project_id)
+
+            series = []
+            for comp_name, months_counter in monthly_by_competitor.items():
+                series.append({
+                    'competitor': comp_name,
+                    'total': sum(months_counter.values()),
+                    'data': [months_counter.get(month, 0) for month in ordered_months],
+                })
+            series.sort(key=lambda item: item['total'], reverse=True)
+
+            topic_series = []
+            for topic, comp_months in sorted(
+                topic_competitor_months.items(),
+                key=lambda item: -sum(sum(counter.values()) for counter in item[1].values())
+            ):
+                entries = []
+                for comp_name, months_counter in comp_months.items():
+                    entries.append({
+                        'competitor': comp_name,
+                        'total': sum(months_counter.values()),
+                        'data': [months_counter.get(month, 0) for month in ordered_months],
+                    })
+                entries.sort(key=lambda item: item['total'], reverse=True)
+                topic_series.append({'topic': topic, 'series': entries})
+
             return {
                 'topic_trends': topic_trends,
                 'keyword_trends': keyword_trends,
                 'monthly_volume': dict(monthly_volume),
+                'months': ordered_months,
+                'competitor_monthly': series,
+                'topic_competitor_monthly': topic_series,
+                **product_payload,
                 'total_posts': total_posts,
                 'total_competitors': total_competitors
             }

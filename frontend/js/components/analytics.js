@@ -42,6 +42,9 @@ export function initAnalytics(api) {
   let cachedPosts = [];
   let activeComparisonMetric = 'rating'; // 'rating' or 'reviews'
   let activeGeoMetric = 'reviews'; // 'reviews', 'posts', 'rating'
+  let trendTopicSelection = 'all'; // topic filter for the company trend lines
+  let trendChartData = null;       // last trend-analysis payload (for re-rendering)
+  let productGroupSelection = 'all'; // category filter for the product timeline
 
   // Format date safely
   function formatDate(d) {
@@ -53,6 +56,39 @@ export function initAnalytics(api) {
     } catch {
       return d;
     }
+  }
+
+  // Charts must only ever plot real scraped values. When a project has no
+  // data yet the canvas shows an honest empty state instead of another
+  // project's demo numbers (which looked like the wrong cafe/salon data).
+  function setChartEmptyState(canvas, message) {
+    if (!canvas) return;
+    const parent = canvas.parentElement;
+    if (!parent) return;
+    let overlay = parent.querySelector('.chart-empty-state');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'chart-empty-state absolute inset-0 flex items-center justify-center text-center px-6 pointer-events-none';
+      parent.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="text-xs text-sand-500 max-w-[280px]">
+        <svg width="22" height="22" class="mx-auto mb-2 text-sand-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+        <p class="font-medium text-sand-600">${message}</p>
+      </div>`;
+  }
+
+  function clearChartEmptyState(canvas) {
+    canvas?.parentElement?.querySelector('.chart-empty-state')?.remove();
+  }
+
+  function showEmptyState(container, message) {
+    if (!container) return;
+    container.innerHTML = `
+      <div class="py-10 text-center text-xs text-sand-500">
+        <svg width="24" height="24" class="mx-auto mb-3 text-sand-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+        <p class="font-medium text-sand-600">${message}</p>
+      </div>`;
   }
 
   // Initialize
@@ -97,7 +133,13 @@ export function initAnalytics(api) {
           setTimeout(() => leafletMap.invalidateSize(), 150);
         }
 
-        // Trigger Chart.js resize
+        // Re-render rating distribution chart when reviews module is shown
+        // (canvas needs to be visible for Chart.js to render properly)
+        if (targetId === 'module-reviews' && cachedReviewAnalytics) {
+          renderRatingDistributionChart(cachedReviewAnalytics.rating_distribution);
+        }
+
+        // Trigger Chart.js resize for other charts
         Object.values(charts).forEach(c => {
           if (c && typeof c.resize === 'function') c.resize();
         });
@@ -604,9 +646,23 @@ export function initAnalytics(api) {
       tableEl.innerHTML = `
         <div class="py-10 text-center text-xs text-sand-500">
           <svg width="24" height="24" class="mx-auto mb-3 text-sand-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          <p class="font-medium text-sand-600">No trend data yet</p>
+          <p class="font-medium text-sand-600">No topic trends yet</p>
           <p class="mt-1">Add competitors and run scraping (last 6 months) to see topic trends.</p>
         </div>`;
+      if (cloudEl) cloudEl.innerHTML = `<p class="text-xs text-sand-400 italic">No keyword data yet.</p>`;
+      if (barsEl) barsEl.innerHTML = `<p class="text-xs text-sand-400 italic">No monthly data yet.</p>`;
+      if (metaEl) metaEl.innerHTML = `
+        <div class="flex flex-col items-end gap-1">
+          <span class="text-2xl font-bold font-serif text-sand-900">${data?.total_posts || 0}</span>
+          <span class="text-[10px] text-sand-400 uppercase tracking-wider">Posts Analysed</span>
+          <span class="text-[10px] text-sand-500">${data?.total_competitors || 0} competitors tracked</span>
+        </div>`;
+
+      // Company lines need dated posts, but the PRODUCT timeline is built from
+      // posts AND captured reviews - most projects only have reviews, so it
+      // must still render here instead of showing the previous project's data.
+      renderTrendLineChart(data || {});
+      renderProductTrendChart(data || {});
       return;
     }
 
@@ -726,34 +782,271 @@ export function initAnalytics(api) {
         barsEl.innerHTML = `<p class="text-xs text-sand-400 italic">No monthly data yet.</p>`;
       }
     }
+
+    // ── Company trend lines (one line per competitor on one graph) ──────────
+    renderTrendLineChart(data);
+
+    // ── Product demand timeline (which exact product is rising) ─────────────
+    renderProductTrendChart(data);
   }
 
-  // 1. Render Merged Market KPIs (PDF Page 3)
+  // 6b. Multi-company trend line chart.
+  // One line per competitor on the same graph so it is easy to see which
+  // company pushed which topic from the very start of each series, and the
+  // dropdown narrows the lines to a single scraped topic.
+  function renderTrendLineChart(data) {
+    const canvas = document.getElementById('chart-trend-lines');
+    if (!canvas || !window.Chart) return;
+
+    trendChartData = data || {};
+    const months = trendChartData.months || [];
+    const allTopics = (trendChartData.topic_competitor_monthly || []).map(t => t.topic);
+
+    // Fill the topic dropdown from the real scraped topics.
+    const selector = document.getElementById('trend-topic-select');
+    if (selector) {
+      const current = trendTopicSelection;
+      selector.innerHTML = `<option value="all">All topics</option>` +
+        allTopics.map(topic => `<option value="${topic}">${topic}</option>`).join('');
+      selector.value = (current === 'all' || allTopics.includes(current)) ? current : 'all';
+      trendTopicSelection = selector.value;
+
+      if (!selector.dataset.bound) {
+        selector.dataset.bound = '1';
+        selector.addEventListener('change', () => {
+          trendTopicSelection = selector.value;
+          renderTrendLineChart(trendChartData);
+        });
+      }
+    }
+
+    const selection = trendTopicSelection || 'all';
+    let series = [];
+    if (selection === 'all') {
+      series = trendChartData.competitor_monthly || [];
+    } else {
+      const entry = (trendChartData.topic_competitor_monthly || []).find(t => t.topic === selection);
+      series = entry?.series || [];
+    }
+
+    if (charts.trendLines) {
+      charts.trendLines.destroy();
+      charts.trendLines = null;
+    }
+
+    if (months.length === 0 || series.length === 0) {
+      setChartEmptyState(canvas, 'No dated posts captured yet. Scrape competitors to plot each company\'s posting trend on one graph.');
+      return;
+    }
+    clearChartEmptyState(canvas);
+
+    const palette = ['#5E7E62', '#C8684C', '#D4A373', '#4A6B82', '#8C6A58', '#93827F', '#B0A89C', '#7A8B7C'];
+    const datasets = series.slice(0, 8).map((entry, i) => ({
+      label: entry.competitor,
+      data: months.map((_, idx) => (entry.data && entry.data[idx]) || 0),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '22',
+      fill: false,
+      tension: 0.35,
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 5
+    }));
+
+    charts.trendLines = new Chart(canvas, {
+      type: 'line',
+      data: { labels: months, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, color: '#57524A' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y} post${ctx.parsed.y === 1 ? '' : 's'}`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#8C8479', font: { size: 10 } } },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#8C8479', precision: 0 },
+            grid: { color: '#F0EAE0' },
+            title: {
+              display: true,
+              text: selection === 'all'
+                ? 'Posts published per month (per company)'
+                : `"${selection}" posts per month (per company)`,
+              color: '#57524A',
+              font: { size: 10, weight: '600' }
+            }
+          }
+        }
+      }
+    });
+  }
+  // 6c. Product demand timeline.
+  // One line per exact product (espresso / frappe / cold brew / matcha ...)
+  // plotted over the months, so it is clear which product is being mentioned
+  // more over time — plus a ranked list with trend direction and the months
+  // each product appeared in.
+  function renderProductTrendChart(data) {
+    const canvas = document.getElementById('chart-product-trends');
+    const listEl = document.getElementById('trend-product-list');
+    const selector = document.getElementById('trend-product-group-select');
+    if (!canvas || !window.Chart) return;
+
+    // Products can be mentioned in reviews only, so the product timeline has
+    // its own month axis (falls back to the post months when absent).
+    const months = (data?.product_months?.length ? data.product_months : data?.months) || [];
+    const allProducts = data?.product_trends || [];
+    const groups = data?.product_groups || [];
+
+    // Category filter (e.g. "Coffee & Beverages").
+    if (selector) {
+      const current = productGroupSelection;
+      selector.innerHTML = `<option value="all">All products</option>` +
+        groups.map(group => `<option value="${group}">${group}</option>`).join('');
+      selector.value = (current === 'all' || groups.includes(current)) ? current : 'all';
+      productGroupSelection = selector.value;
+
+      if (!selector.dataset.bound) {
+        selector.dataset.bound = '1';
+        selector.addEventListener('change', () => {
+          productGroupSelection = selector.value;
+          renderProductTrendChart(trendChartData || {});
+        });
+      }
+    }
+
+    const selection = productGroupSelection || 'all';
+    const products = (selection === 'all'
+      ? allProducts
+      : allProducts.filter(product => product.group === selection)
+    ).filter(product => product.occurrence > 0);
+
+    if (charts.productTrends) {
+      charts.productTrends.destroy();
+      charts.productTrends = null;
+    }
+
+    if (months.length === 0 || products.length === 0) {
+      setChartEmptyState(
+        canvas,
+        selection === 'all'
+          ? 'No product mentions captured yet. Scrape competitor posts/reviews to track which products are demanded over time.'
+          : `No "${selection}" products mentioned in the captured text yet.`
+      );
+      if (listEl) listEl.innerHTML = '';
+      return;
+    }
+    clearChartEmptyState(canvas);
+
+    const palette = ['#5E7E62', '#C8684C', '#D4A373', '#4A6B82', '#8C6A58', '#93827F', '#B0A89C', '#7A8B7C'];
+    const topProducts = products.slice(0, 8);
+
+    const datasets = topProducts.map((product, i) => ({
+      label: product.product,
+      data: months.map((_, idx) => (product.data && product.data[idx]) || 0),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '22',
+      fill: false,
+      tension: 0.35,
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 5
+    }));
+
+    charts.productTrends = new Chart(canvas, {
+      type: 'line',
+      data: { labels: months, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, color: '#57524A' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y} mention${ctx.parsed.y === 1 ? '' : 's'}`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#8C8479', font: { size: 10 } } },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#8C8479', precision: 0 },
+            grid: { color: '#F0EAE0' },
+            title: {
+              display: true,
+              text: selection === 'all'
+                ? 'Product mentions per month'
+                : `"${selection}" mentions per month`,
+              color: '#57524A',
+              font: { size: 10, weight: '600' }
+            }
+          }
+        }
+      }
+    });
+
+    // ---- Ranked product list with direction + first/last month -------------
+    if (!listEl) return;
+    const dirStyles = {
+      rising: { cls: 'bg-[#EBF2EC] text-[#5E7E62]', label: 'Rising' },
+      falling: { cls: 'bg-[#FCEFEA] text-[#C8684C]', label: 'Falling' },
+      stable: { cls: 'bg-[#FDF6EC] text-[#A66E20]', label: 'Stable' }
+    };
+
+    listEl.innerHTML = products.slice(0, 9).map(product => {
+      const dir = dirStyles[product.trend_direction] || dirStyles.stable;
+      const span = product.first_month
+        ? `${product.first_month} → ${product.last_month}`
+        : '—';
+      return `
+        <div class="p-3 bg-[#FAF8F5] rounded-xl border border-[#E8E2D8] space-y-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-bold text-sand-900 truncate">${product.product}</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${dir.cls}">${dir.label}</span>
+          </div>
+          <div class="flex items-center justify-between text-[11px] text-sand-500">
+            <span><span class="font-bold text-sand-800">${product.occurrence}</span> mention${product.occurrence === 1 ? '' : 's'}</span>
+            <span>${product.competitors_using} competitor${product.competitors_using === 1 ? '' : 's'}</span>
+          </div>
+          <div class="text-[10px] text-sand-400">${product.group} · ${span}</div>
+        </div>`;
+    }).join('');
+  }
+
+
+
+  // 1. Render Merged Market KPIs (PDF Page 3) — real scraped values only
   function renderMarketKPIs(market) {
-    if (!market) return;
+    const avgRating = market?.market_avg_rating;
+    const totalRevs = market?.total_reviews;
+    const posPct = market?.positive_sentiment_pct;
+    const negPct = market?.negative_sentiment_pct;
+    const neuPct = market?.neutral_sentiment_pct;
+    const compCount = market?.competitor_count || 0;
 
-    const avgRating = market.market_avg_rating || 4.5;
-    const totalRevs = market.total_reviews || 3275;
-    const posPct = market.positive_sentiment_pct ?? 76.7;
-    const negPct = market.negative_sentiment_pct ?? 16.7;
-    const neuPct = market.neutral_sentiment_pct ?? 6.7;
-    const compCount = market.competitor_count || 4;
+    if (marketAvgRatingEl) marketAvgRatingEl.textContent = avgRating != null ? Number(avgRating).toFixed(1) : '—';
+    if (marketRatingBasisEl) marketRatingBasisEl.textContent = compCount ? `Across ${compCount} rivals` : 'No competitors yet';
+    if (marketRatingBar) marketRatingBar.style.width = avgRating != null ? `${Math.min(100, Math.round((avgRating / 5.0) * 100))}%` : '0%';
 
-    if (marketAvgRatingEl) marketAvgRatingEl.textContent = avgRating.toFixed(1);
-    if (marketRatingBasisEl) marketRatingBasisEl.textContent = `Across ${compCount} rivals`;
-    if (marketRatingBar) marketRatingBar.style.width = `${Math.min(100, Math.round((avgRating / 5.0) * 100))}%`;
+    if (marketTotalReviewsEl) marketTotalReviewsEl.textContent = totalRevs != null ? Number(totalRevs).toLocaleString() : '—';
 
-    if (marketTotalReviewsEl) marketTotalReviewsEl.textContent = Number(totalRevs).toLocaleString();
+    if (marketPosSentimentEl) marketPosSentimentEl.textContent = posPct != null ? `${posPct}%` : '—';
+    if (marketPosBar) marketPosBar.style.width = posPct != null ? `${posPct}%` : '0%';
 
-    if (marketPosSentimentEl) marketPosSentimentEl.textContent = `${posPct}%`;
-    if (marketPosBar) marketPosBar.style.width = `${posPct}%`;
+    if (marketNegSentimentEl) marketNegSentimentEl.textContent = negPct != null ? `${negPct}%` : '—';
+    if (marketNegBar) marketNegBar.style.width = negPct != null ? `${negPct}%` : '0%';
 
-    if (marketNegSentimentEl) marketNegSentimentEl.textContent = `${negPct}%`;
-    if (marketNegBar) marketNegBar.style.width = `${negPct}%`;
-
-    if (sentimentPosCountEl) sentimentPosCountEl.textContent = `${posPct}%`;
-    if (sentimentNeuCountEl) sentimentNeuCountEl.textContent = `${neuPct}%`;
-    if (sentimentNegCountEl) sentimentNegCountEl.textContent = `${negPct}%`;
+    if (sentimentPosCountEl) sentimentPosCountEl.textContent = posPct != null ? `${posPct}%` : '—';
+    if (sentimentNeuCountEl) sentimentNeuCountEl.textContent = neuPct != null ? `${neuPct}%` : '—';
+    if (sentimentNegCountEl) sentimentNegCountEl.textContent = negPct != null ? `${negPct}%` : '—';
   }
 
   // 2. Real Chart.js: Market Comparison (Ratings vs Reviews Toggle)
@@ -761,14 +1054,18 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-market-comparison');
     if (!canvas || !window.Chart) return;
 
-    if (charts.comparison) charts.comparison.destroy();
+    if (charts.comparison) {
+      charts.comparison.destroy();
+      charts.comparison = null;
+    }
 
-    const rawComps = competitors.length > 0 ? competitors : [
-      { name: 'Park Avenue', rating: 4.9, review_count: 552, post_count: 9 },
-      { name: 'Zudio', rating: 4.2, review_count: 2517, post_count: 2 },
-      { name: 'Crazy world', rating: 3.9, review_count: 206, post_count: 0 },
-      { name: 'M&Z Fashion', rating: 5.0, review_count: 0, post_count: 0 }
-    ];
+    // Only tracked competitors are plotted; no demo businesses are shown when
+    // a project is empty.
+    const rawComps = competitors.length > 0 ? competitors : [];
+    if (rawComps.length === 0) {
+      setChartEmptyState(canvas, 'No competitors tracked yet. Discover or add competitors to compare Google Maps ratings and review volumes.');
+      return;
+    }
 
     // Sort: 0-rating, 0-reviews, 0-posts competitors ALWAYS LAST
     const comps = [...rawComps].sort((a, b) => {
@@ -784,6 +1081,19 @@ export function initAnalytics(api) {
     const dataValues = activeComparisonMetric === 'rating'
       ? comps.map(c => c.rating || 0)
       : comps.map(c => c.review_count || 0);
+
+    // Nothing scraped yet: an all-zero chart is misleading, so explain it.
+    if (!dataValues.some(v => Number(v) > 0)) {
+      setChartEmptyState(
+        canvas,
+        activeComparisonMetric === 'rating'
+          ? 'No Google Maps ratings captured yet. Run a scrape to collect the real values.'
+          : 'No review volumes captured yet. Run a scrape to collect the real values.'
+      );
+      return;
+    }
+
+    clearChartEmptyState(canvas);
 
     const colors = ['#5E7E62', '#C8684C', '#D4A373', '#8C6A58'];
 
@@ -837,18 +1147,29 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-market-sentiment');
     if (!canvas || !window.Chart) return;
 
-    if (charts.sentiment) charts.sentiment.destroy();
+    if (charts.sentiment) {
+      charts.sentiment.destroy();
+      charts.sentiment = null;
+    }
 
-    const pos = market?.positive_sentiment_pct ?? 76.7;
-    const neu = market?.neutral_sentiment_pct ?? 6.7;
-    const neg = market?.negative_sentiment_pct ?? 16.7;
+    const pos = market?.positive_sentiment_pct;
+    const neu = market?.neutral_sentiment_pct;
+    const neg = market?.negative_sentiment_pct;
+
+    // Sentiment is computed from scraped reviews. Without reviews there is
+    // nothing honest to plot, so show how to collect the data instead.
+    if (pos == null && neu == null && neg == null) {
+      setChartEmptyState(canvas, 'No reviews scraped yet. Run a scrape to analyse customer sentiment.');
+      return;
+    }
+    clearChartEmptyState(canvas);
 
     charts.sentiment = new Chart(canvas, {
       type: 'doughnut',
       data: {
         labels: ['Positive Sentiment', 'Neutral / Mixed', 'Negative / Risks'],
         datasets: [{
-          data: [pos, neu, neg],
+          data: [pos || 0, neu || 0, neg || 0],
           backgroundColor: ['#5E7E62', '#D4A373', '#C8684C'],
           borderWidth: 2,
           borderColor: '#FAF8F5'
@@ -875,14 +1196,22 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-competitive-scatter');
     if (!canvas || !window.Chart) return;
 
-    if (charts.scatter) charts.scatter.destroy();
+    if (charts.scatter) {
+      charts.scatter.destroy();
+      charts.scatter = null;
+    }
 
-    const rawComps = competitors.length > 0 ? competitors : [
-      { name: 'Park Avenue', rating: 4.9, review_count: 552, post_count: 9, address: 'Sector 12, Kharghar' },
-      { name: 'Zudio - Mahavir Astha', rating: 4.2, review_count: 2517, post_count: 2, address: 'Sector 7, Kharghar' },
-      { name: 'Crazy world', rating: 3.9, review_count: 206, post_count: 0, address: 'Sector 20, Kharghar' },
-      { name: 'M&Z Fashion', rating: 5.0, review_count: 0, post_count: 0, address: 'Sector 4, Kharghar' }
-    ];
+    const matrixCardsEl0 = document.getElementById('competitive-matrix-cards');
+
+    // No tracked competitors => no scatter plot (never a demo company).
+    if (!competitors || competitors.length === 0) {
+      setChartEmptyState(canvas, 'No competitors tracked yet. Add competitors to map the competitive landscape.');
+      if (matrixCardsEl0) matrixCardsEl0.innerHTML = '';
+      return;
+    }
+    clearChartEmptyState(canvas);
+
+    const rawComps = competitors;
 
     // Competitors with 0 rating or 0 reviews & 0 posts are STRICTLY sorted to the last positions
     const comps = [...rawComps].sort((a, b) => {
@@ -906,10 +1235,10 @@ export function initAnalytics(api) {
         label: isUnverified ? `${c.name} (Unverified Sample)` : c.name,
         data: [{
           x: Math.max(0, reviews),
-          y: c.rating || 4.5,
+          y: c.rating != null ? c.rating : 0,
           compName: c.name,
           posts: posts,
-          addr: c.address ? c.address.split(',')[0] : 'Navi Mumbai',
+          addr: c.address ? c.address.split(',')[0] : 'Address not available',
           compId: c.id,
           isUnverified: isUnverified
         }],
@@ -966,7 +1295,7 @@ export function initAnalytics(api) {
             ticks: { color: '#8C8479' }
           },
           y: {
-            min: 3.5,
+            min: 0,
             max: 5.2,
             title: { display: true, text: 'Google Maps Rating (1 to 5 Stars) (Y-Axis)', color: '#57524A', font: { weight: '600' } },
             grid: { color: '#F0EAE0' },
@@ -1026,11 +1355,23 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-rating-distribution');
     if (!canvas || !window.Chart) return;
 
-    if (charts.ratingDist) charts.ratingDist.destroy();
+    if (charts.ratingDist) {
+      charts.ratingDist.destroy();
+      charts.ratingDist = null;
+    }
 
-    const dist = ratingDist || { '5': 23, '4': 3, '3': 2, '2': 1, '1': 1 };
+    const dist = ratingDist || {};
     const labels = ['5 Stars', '4 Stars', '3 Stars', '2 Stars', '1 Star'];
     const values = [dist['5'] || 0, dist['4'] || 0, dist['3'] || 0, dist['2'] || 0, dist['1'] || 0];
+
+    // No scraped reviews => no distribution. The previous behaviour showed a
+    // different project's demo counts here.
+    if (!values.some(v => v > 0)) {
+      setChartEmptyState(canvas, 'No reviews captured yet. Run a scrape to collect real customer ratings.');
+      return;
+    }
+    clearChartEmptyState(canvas);
+
     const colors = ['#5E7E62', '#8C8479', '#D4A373', '#C8684C', '#8E3F28'];
 
     charts.ratingDist = new Chart(canvas, {
@@ -1075,13 +1416,14 @@ export function initAnalytics(api) {
     const container = document.getElementById('review-topic-bars');
     if (!container) return;
 
-    let topics = reviewTopics.length > 0 ? reviewTopics : [
-      { topic: 'Staff & Customer Service', count: 11, competitors: { 'Park Avenue': 9, 'Zudio': 2 } },
-      { topic: 'School Uniforms & Supplies', count: 6, competitors: { 'Crazy world': 6 } },
-      { topic: 'Pricing & Budget Shopping', count: 4, competitors: { 'Crazy world': 3, 'Park Avenue': 1 } },
-      { topic: 'Store Layout & Ambience', count: 4, competitors: { 'Zudio': 3, 'Park Avenue': 1 } },
-      { topic: 'Suit & Blazer Collection', count: 3, competitors: { 'Park Avenue': 3 } }
-    ];
+    const topics = reviewTopics.length > 0 ? reviewTopics : [];
+
+    // No reviews captured yet: explain how to collect them instead of showing
+    // another project's demo topics.
+    if (topics.length === 0) {
+      showEmptyState(container, 'No review topics yet. Run a scrape to extract topics from customer reviews.');
+      return;
+    }
 
     const maxCount = Math.max(...topics.map(t => t.count), 1);
     const colors = ['bg-sage-500', 'bg-terracotta-500', 'bg-amber-500', 'bg-clay-500'];
@@ -1118,35 +1460,29 @@ export function initAnalytics(api) {
     const container = document.getElementById('negative-topics-heatmap');
     if (!container) return;
 
-    const items = [
-      {
-        topic: 'Pricing & Discounts',
-        count: 3,
-        affected: 'Crazy world',
-        quote: 'Prizes are quite high with no discounts... tied up with schools.'
-      },
-      {
-        topic: 'Staff Attitude / Exchange',
-        count: 2,
-        affected: 'Crazy world',
-        quote: 'Rude behaviour of shop personal and harassing for exchange defective clothes.'
-      },
-      {
-        topic: 'Long Distance & Travel',
-        count: 1,
-        affected: 'Crazy world',
-        quote: 'LRT school located in Kamothe, for buying uniform one has to travel to Kharghar.'
-      }
-    ];
+    // Use the real negative topics from scraped reviews. An empty list gets an
+    // empty state instead of the old hardcoded "Crazy world" complaints.
+    const items = (negTopics || []).map(topic => ({
+      topic: topic.topic,
+      count: topic.count,
+      affected: Object.entries(topic.competitors || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => `${name} (${count})`)
+        .join(', ') || 'Multiple competitors'
+    }));
 
-    container.innerHTML = items.map(item => `
+    if (items.length === 0) {
+      showEmptyState(container, 'No negative-sentiment reviews captured yet. Run a scrape to surface complaint patterns.');
+      return;
+    }
+
+    container.innerHTML = items.slice(0, 6).map(item => `
       <div class="p-4 rounded-xl border border-terracotta-200 bg-terracotta-50/50 space-y-2">
         <div class="flex items-center justify-between">
           <span class="badge-terracotta text-[10px] font-semibold px-2 py-0.5 rounded-full">${item.count} complaints</span>
-          <span class="text-[11px] font-bold text-sand-800">${item.affected}</span>
+          <span class="text-[11px] font-bold text-sand-800 truncate max-w-[60%]" title="${item.affected}">${item.affected}</span>
         </div>
         <h4 class="text-xs font-bold text-sand-900">${item.topic}</h4>
-        <p class="text-[11px] text-sand-600 italic line-clamp-2">"${item.quote}"</p>
       </div>
     `).join('');
   }
@@ -1156,31 +1492,62 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-posts-timeline');
     if (!canvas || !window.Chart) return;
 
-    if (charts.postsTimeline) charts.postsTimeline.destroy();
+    if (charts.postsTimeline) {
+      charts.postsTimeline.destroy();
+      charts.postsTimeline = null;
+    }
 
-    // Months: July, August, September 2026
-    const months = ['July 2026', 'August 2026', 'September 2026'];
-    const parkAvenuePosts = [4, 3, 2];
-    const zudioPosts = [0, 0, 2];
+    // Group the scraped posts by month + competitor. The old chart showed a
+    // hardcoded Park Avenue / Zudio timeline for every project.
+    const monthMap = new Map();
+    const perCompetitor = new Map();
+
+    (posts || []).forEach(post => {
+      if (!post?.published_date) return;
+      const dt = new Date(post.published_date);
+      if (isNaN(dt.getTime())) return;
+      const label = dt.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      const sortKey = new Date(dt.getFullYear(), dt.getMonth(), 1).getTime();
+      if (!monthMap.has(label)) monthMap.set(label, sortKey);
+      const name = post.competitor_name || 'Unknown competitor';
+      if (!perCompetitor.has(name)) perCompetitor.set(name, {});
+      const bucket = perCompetitor.get(name);
+      bucket[label] = (bucket[label] || 0) + 1;
+    });
+
+    const labels = [...monthMap.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([label]) => label);
+
+    if (labels.length === 0 || perCompetitor.size === 0) {
+      setChartEmptyState(canvas, 'No dated posts captured yet. Run a scrape to build the publishing timeline.');
+      return;
+    }
+    clearChartEmptyState(canvas);
+
+    const palette = ['#5E7E62', '#C8684C', '#D4A373', '#8C6A58', '#4A6B82', '#93827F'];
+    // Keep the chart readable: biggest publishers first, at most six lines.
+    const topCompetitors = [...perCompetitor.entries()]
+      .map(([name, bucket]) => ({
+        name,
+        bucket,
+        total: Object.values(bucket).reduce((sum, n) => sum + n, 0)
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+
+    const datasets = topCompetitors.map((entry, i) => ({
+      label: entry.name,
+      data: labels.map(label => entry.bucket[label] || 0),
+      backgroundColor: palette[i % palette.length],
+      borderRadius: 6
+    }));
 
     charts.postsTimeline = new Chart(canvas, {
       type: 'bar',
       data: {
-        labels: months,
-        datasets: [
-          {
-            label: 'Park Avenue',
-            data: parkAvenuePosts,
-            backgroundColor: '#5E7E62',
-            borderRadius: 6
-          },
-          {
-            label: 'Zudio - Mahavir Astha',
-            data: zudioPosts,
-            backgroundColor: '#C8684C',
-            borderRadius: 6
-          }
-        ]
+        labels: labels,
+        datasets: datasets
       },
       options: {
         responsive: true,
@@ -1194,7 +1561,7 @@ export function initAnalytics(api) {
           }
         },
         scales: {
-          x: { grid: { display: false } },
+          x: { grid: { display: false }, stacked: false },
           y: {
             beginAtZero: true,
             ticks: { stepSize: 1 },
@@ -1210,22 +1577,36 @@ export function initAnalytics(api) {
     const canvas = document.getElementById('chart-post-themes');
     if (!canvas || !window.Chart) return;
 
-    if (charts.postThemes) charts.postThemes.destroy();
+    if (charts.postThemes) {
+      charts.postThemes.destroy();
+      charts.postThemes = null;
+    }
 
-    const themes = {
-      'New Collection': 7,
-      'Occasion & Festive Wear': 2,
-      'Casual & Streetwear': 1,
-      'Store & Visit': 1
-    };
+    // Real theme distribution from the scraped posts' detected topics.
+    const themes = {};
+    (posts || []).forEach(post => {
+      const topic = post?.detected_topic;
+      if (!topic) return;
+      themes[topic] = (themes[topic] || 0) + 1;
+    });
+
+    const sortedThemes = Object.entries(themes).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+    if (sortedThemes.length === 0) {
+      setChartEmptyState(canvas, 'No post themes yet. Run a scrape to classify competitor content.');
+      return;
+    }
+    clearChartEmptyState(canvas);
+
+    const palette = ['#5E7E62', '#C8684C', '#D4A373', '#8C6A58', '#4A6B82', '#93827F', '#B0A89C', '#7A8B7C'];
 
     charts.postThemes = new Chart(canvas, {
       type: 'doughnut',
       data: {
-        labels: Object.keys(themes),
+        labels: sortedThemes.map(([topic]) => topic),
         datasets: [{
-          data: Object.values(themes),
-          backgroundColor: ['#5E7E62', '#C8684C', '#D4A373', '#8C6A58'],
+          data: sortedThemes.map(([, count]) => count),
+          backgroundColor: sortedThemes.map((_, i) => palette[i % palette.length]),
           borderWidth: 2,
           borderColor: '#FAF8F5'
         }]
@@ -1246,16 +1627,16 @@ export function initAnalytics(api) {
     const mapEl = document.getElementById('geographic-map');
     if (!mapEl || !window.L) return;
 
-    const comps = competitors.length > 0 ? competitors : [
-      { id: 255, name: 'Zudio', latitude: 19.0369374, longitude: 73.0632662, rating: 4.2, review_count: 2517, post_count: 2, address: 'Sector 7, Kharghar' },
-      { id: 253, name: 'Park Avenue', latitude: 19.0424618, longitude: 73.0640728, rating: 4.9, review_count: 552, post_count: 9, address: 'Sector 12, Kharghar' },
-      { id: 254, name: 'Crazy world', latitude: 19.0478702, longitude: 73.0702905, rating: 3.9, review_count: 206, post_count: 0, address: 'Sector 20, Kharghar' },
-      { id: 252, name: 'M&Z Fashion', latitude: 19.0317607, longitude: 73.0601276, rating: 5.0, review_count: 25, post_count: 0, address: 'Sector 4, Kharghar' }
-    ];
+    // Only competitors with real Google Maps coordinates are plotted.
+    const comps = (competitors || []).filter(
+      c => Number.isFinite(c.latitude) && Number.isFinite(c.longitude)
+    );
+
+    const distanceCardsEl0 = document.getElementById('geo-competitor-distances');
 
     // Initialize map if not yet created
     if (!leafletMap) {
-      leafletMap = L.map('geographic-map').setView([19.039, 73.065], 14);
+      leafletMap = L.map('geographic-map').setView([19.039, 73.065], 12);
       L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap &copy; CARTO',
         maxZoom: 19
@@ -1266,21 +1647,42 @@ export function initAnalytics(api) {
     mapMarkers.forEach(m => leafletMap.removeLayer(m));
     mapMarkers = [];
 
+    // No coordinates captured yet: explain instead of plotting demo shops.
+    if (comps.length === 0) {
+      mapEl.querySelector('.geo-empty-state')?.remove();
+      const message = document.createElement('div');
+      message.className = 'geo-empty-state absolute inset-0 z-[400] flex items-center justify-center text-center bg-[#FAF8F5]/95 px-6';
+      message.innerHTML = `
+        <div class="text-xs text-sand-500 max-w-[280px]">
+          <svg width="22" height="22" class="mx-auto mb-2 text-sand-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/></svg>
+          <p class="font-medium text-sand-600">No GPS coordinates captured yet.</p>
+          <p class="mt-1">Coordinates are stored when a competitor's Google Maps listing is resolved (discovery or Resolve).</p>
+        </div>`;
+      mapEl.appendChild(message);
+      if (distanceCardsEl0) distanceCardsEl0.innerHTML = '';
+      return;
+    }
+    mapEl.querySelector('.geo-empty-state')?.remove();
+
+    // Frame the real competitor locations.
+    const bounds = L.latLngBounds(comps.map(c => [c.latitude, c.longitude]));
+    leafletMap.fitBounds(bounds.pad(0.25));
+
     // Add markers with radius determined by activeGeoMetric
     comps.forEach(c => {
-      const lat = c.latitude || 19.039;
-      const lon = c.longitude || 73.065;
-      const rating = c.rating || 4.5;
-      const revs = c.review_count || 30;
+      const lat = c.latitude;
+      const lon = c.longitude;
+      const rating = c.rating;          // may be null until scraped
+      const revs = c.review_count || 0;
       const posts = c.post_count || 0;
 
       let radius = 12;
       if (activeGeoMetric === 'reviews') {
-        radius = Math.max(9, Math.min(26, Math.sqrt(revs) * 0.55));
+        radius = Math.max(9, Math.min(26, Math.sqrt(Math.max(revs, 1)) * 0.55));
       } else if (activeGeoMetric === 'posts') {
         radius = Math.max(9, Math.min(24, 9 + posts * 1.6));
       } else if (activeGeoMetric === 'rating') {
-        radius = Math.max(9, Math.round(rating * 3.5));
+        radius = rating ? Math.max(9, Math.round(rating * 3.5)) : 9;
       }
 
       const circle = L.circleMarker([lat, lon], {
@@ -1295,9 +1697,9 @@ export function initAnalytics(api) {
       const popupHtml = `
         <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 12px; min-width: 170px;">
           <h4 style="font-weight: 700; margin: 0 0 4px 0; color: #2B2824;">${c.name}</h4>
-          <p style="margin: 0 0 4px 0; color: #8C8479; font-size: 11px;">${c.address ? c.address.split(',')[0] : 'Kharghar'}</p>
+          <p style="margin: 0 0 4px 0; color: #8C8479; font-size: 11px;">${c.address ? c.address.split(',')[0] : 'Address not available'}</p>
           <div style="display: flex; gap: 8px; font-weight: 600; margin-bottom: 6px;">
-            <span style="color: #B8824C;">Rating: ${rating.toFixed(1)}</span>
+            <span style="color: #B8824C;">Rating: ${rating != null ? Number(rating).toFixed(1) : '—'}</span>
             <span style="color: #57524A;">Reviews: ${revs.toLocaleString()}</span>
             <span style="color: #5E7E62;">Posts: ${posts}</span>
           </div>
@@ -1316,9 +1718,9 @@ export function initAnalytics(api) {
         <div class="p-3 bg-[#FAF8F5] rounded-xl border border-[#E8E2D8] text-xs">
           <div class="flex items-center justify-between mb-1">
             <span class="font-bold text-sand-900 truncate">${c.name.split('-')[0]}</span>
-            <span class="text-amber-700 font-bold font-mono">${(c.rating || 4.5).toFixed(1)} / 5.0</span>
+            <span class="text-amber-700 font-bold font-mono">${c.rating != null ? Number(c.rating).toFixed(1) : '—'} / 5.0</span>
           </div>
-          <p class="text-[11px] text-sand-500 truncate">${c.address ? c.address.split(',')[0] : 'Navi Mumbai'}</p>
+          <p class="text-[11px] text-sand-500 truncate">${c.address ? c.address.split(',')[0] : 'Address not available'}</p>
         </div>
       `).join('');
     }

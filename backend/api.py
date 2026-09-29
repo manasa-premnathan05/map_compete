@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -57,6 +58,7 @@ def _bool_arg(name: str, default: bool = True) -> bool:
 from database import DatabaseManager
 from scraper import GoogleMapsScraper
 from ai_service import AIServiceManager
+from topic_classifier import classify_sentiment, infer_industry
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -65,6 +67,94 @@ CORS(app)  # Enable CORS for frontend communication
 DB_PATH = os.environ.get("DB_PATH") or str(Path(__file__).resolve().parent / "competitor_intelligence.db")
 db = DatabaseManager(DB_PATH)
 ai_service = AIServiceManager()
+
+
+def looks_like_place_card(text: str) -> bool:
+    """True for Google Maps *place suggestion* cards, never for a review.
+
+    A card contains the rating-and-count summary of a business
+    ("Brevé Bakery4.0(826) · ₹400–1,000Cafe · ...") or menu/status labels
+    like "Dine-in · Takeaway". They are not customer reviews and must never
+    be stored as one.
+    """
+    if not text:
+        return False
+    if re.search(r'\d\.\d\(', text):
+        return True
+    for marker in ('Dine-in', 'Takeaway', 'No-contact delivery', 'Drive-through',
+                   'On-site services', 'Temporarily closed', 'Opens ', 'Closes '):
+        if marker in text:
+            return True
+    return False
+
+
+def persist_scraped_reviews(project_id: int, competitor_id: int, posts: list) -> int:
+    """Store scraped public content that is actually a Google Maps review.
+
+    The scraper tags user generated content as ``post_source='public'``; those
+    records carry the reviewer name, relative date and star rating. Persisting
+    them in the ``reviews`` table is what makes the review-intelligence charts
+    (rating distribution, review volume, topic ranking) show real scraped
+    values instead of demo data.
+
+    Reviews without a parsed date or that look like a place-suggestion card
+    are skipped: those belong to a Google Maps results list, not to this
+    competitor.
+    """
+    saved = 0
+    for post in posts or []:
+        if (post or {}).get('post_source') != 'public':
+            continue
+        text = (post.get('text_content') or '').strip()
+        if not text:
+            continue
+        if not post.get('published_date'):
+            continue
+        if looks_like_place_card(text):
+            continue
+        raw = post.get('raw_data') or {}
+        if not isinstance(raw, dict):
+            raw = {}
+        rating = post.get('rating')
+        if rating is None:
+            rating = raw.get('rating')
+        try:
+            rating = int(rating) if rating is not None else None
+        except (TypeError, ValueError):
+            rating = None
+
+        sentiment, score = classify_sentiment(text, rating)
+        review_id = db.add_review(project_id, competitor_id, {
+            'author': raw.get('author'),
+            'rating': rating,
+            'relative_date': raw.get('relative_date'),
+            'review_date': post.get('published_date'),
+            'text_content': text,
+            'sentiment': sentiment,
+            'sentiment_score': score,
+            'detected_topic': post.get('detected_topic'),
+            'detected_keywords': post.get('detected_keywords'),
+            'source_url': post.get('post_url'),
+        })
+        if review_id:
+            saved += 1
+    return saved
+
+
+def persist_competitor_profile(competitor_id: int, profile: dict) -> bool:
+    """Save the Google Maps listing statistics captured during a scrape."""
+    if not profile:
+        return False
+    return db.update_competitor_stats(
+        competitor_id,
+        rating=profile.get('rating'),
+        review_count=profile.get('review_count'),
+        address=profile.get('address'),
+        category=profile.get('category'),
+        rating_distribution=profile.get('rating_distribution'),
+        last_scraped=datetime.now(),
+    )
+
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -855,9 +945,16 @@ def scrape_single_competitor(competitor_id):
         posts = []
         scrape_error = None
         scrape_status = "SUCCESS"
+        scraper = None
+        project = db.get_project(competitor['project_id']) or {}
+        industry = infer_industry(project.get('field'), project.get('our_profile'))
         try:
             scraper = GoogleMapsScraper(headless=True)
-            posts = scraper.scrape_competitor_posts(competitor['name'], gmap_url, window_days=window_days)
+            posts = scraper.scrape_competitor_posts(
+                competitor['name'], gmap_url, window_days=window_days,
+                industry=industry,
+                expected_address=competitor.get('address'),
+            )
             try:
                 scraper.close_driver()
             except Exception:
@@ -875,11 +972,26 @@ def scrape_single_competitor(competitor_id):
                 scrape_status = "FAILED"
             logger.warning(f"Single-competitor scrape failed for {competitor['name']}: {ex}")
 
+        # Diagnostics from the scrape run decide what may be persisted: only a
+        # page verified as this business contributes posts/reviews/stats.
+        diag = (getattr(scraper, 'last_run_diagnostics', {}) or {}).get(competitor['name']) or {}
+        business_verified = bool(diag.get('business_verified'))
+
         new_posts = 0
         duplicates = 0
+        cards_skipped = 0
+        unverified_skipped = 0
         for post_data in posts or []:
             post_data = dict(post_data)
             post_data['competitor_name'] = competitor['name']
+            # Google Maps list-page "place suggestion" cards are not posts.
+            if looks_like_place_card(post_data.get('text_content')):
+                cards_skipped += 1
+                continue
+            # Another business's content must never be stored as ours.
+            if not business_verified:
+                unverified_skipped += 1
+                continue
             if db.add_post(competitor_id, post_data):
                 new_posts += 1
             else:
@@ -902,6 +1014,21 @@ def scrape_single_competitor(competitor_id):
         )
         owner_posts = sum(1 for post in (posts or []) if (post or {}).get('post_source') != 'public')
         public_posts = sum(1 for post in (posts or []) if (post or {}).get('post_source') == 'public')
+
+        # Persist the listing statistics + real reviews captured in this run so
+        # the review charts show Google Maps values instead of demo data.
+        # Reviews are only stored when the opened page was verified as this
+        # business; otherwise another listing's reviews would end up here.
+        place_profile = (getattr(scraper, 'last_place_profiles', {}) or {}).get(competitor['name'])
+        if place_profile:
+            persist_competitor_profile(competitor_id, place_profile)
+        if business_verified:
+            reviews_saved = persist_scraped_reviews(
+                competitor['project_id'], competitor_id, posts
+            )
+        else:
+            reviews_saved = 0
+
         run_detail = {
             'competitor': competitor['name'],
             'competitor_id': competitor_id,
@@ -916,7 +1043,16 @@ def scrape_single_competitor(competitor_id):
             'owner_posts': owner_posts,
             'public_posts': public_posts,
             'window_days': window_days,
+            'reviews_saved': reviews_saved,
+            'place_profile': place_profile,
+            'business_verified': business_verified,
         }
+        if cards_skipped:
+            run_detail['cards_skipped'] = cards_skipped
+        if unverified_skipped:
+            run_detail['unverified_skipped'] = unverified_skipped
+        if diag.get('place_profile_rejected'):
+            run_detail['place_profile_rejected'] = diag['place_profile_rejected']
 
         db.update_scraping_log(
             log_id,
@@ -1189,14 +1325,24 @@ def scrape_competitors(project_id):
 
         # Convert competitors to format expected by scraper
         competitor_list = [
-            {"name": comp["name"], "gmap_url": comp["gmap_url"]}
+            {
+                "name": comp["name"],
+                "gmap_url": comp["gmap_url"],
+                "address": comp.get("address"),
+            }
             for comp in competitors
             if comp["gmap_url"]
         ]
 
-        # Perform scraping (owner updates first, public content afterwards)
-        all_posts = scraper.scrape_multiple_competitors(competitor_list, include_public=True)
+        # Perform scraping (owner updates first, public content afterwards).
+        # The project field/profile selects the topic profile (cafe / salon /
+        # fashion / ecommerce / generic) so topics match this business type.
+        industry = infer_industry(project.get('field'), project.get('our_profile'))
+        all_posts = scraper.scrape_multiple_competitors(
+            competitor_list, include_public=True, industry=industry
+        )
         run_diagnostics = dict(getattr(scraper, "last_run_diagnostics", {}) or {})
+        place_profiles = dict(getattr(scraper, "last_place_profiles", {}) or {})
 
         # Process and save posts
         total_posts_found = 0
@@ -1219,11 +1365,26 @@ def scrape_competitors(project_id):
             total_images += images_found
             new_posts_for_competitor = 0
             duplicates_for_competitor = 0
+            cards_skipped_for_competitor = 0
+            unverified_skipped_for_competitor = 0
+
+            # Per-place diagnostics of this run: reviews/posts are only kept
+            # when the opened page was verified as this business.
+            detail = dict(run_diagnostics.get(competitor_name) or {})
+            business_verified = bool(detail.get("business_verified"))
 
             for post_data in posts:
                 # Add competitor info to post data
                 post_data = dict(post_data)
                 post_data["competitor_name"] = competitor_name
+                # Google Maps list-page "place suggestion" cards are not posts.
+                if looks_like_place_card(post_data.get("text_content")):
+                    cards_skipped_for_competitor += 1
+                    continue
+                # Another business's content must never be stored as ours.
+                if not business_verified:
+                    unverified_skipped_for_competitor += 1
+                    continue
                 post_id = db.add_post(competitor_id, post_data)
                 if post_id:
                     total_new_posts += 1
@@ -1232,8 +1393,17 @@ def scrape_competitors(project_id):
                     total_duplicates += 1  # Duplicate was skipped
                     duplicates_for_competitor += 1
 
+            # Persist the listing statistics + real reviews captured in this
+            # run so the review charts show Google Maps values.
+            profile = place_profiles.get(competitor_name) or {}
+            if profile:
+                persist_competitor_profile(competitor_id, profile)
+            if business_verified:
+                reviews_saved = persist_scraped_reviews(project_id, competitor_id, posts)
+            else:
+                reviews_saved = 0
+
             # Requirement 21: persist the per-competitor statistics of this run.
-            detail = dict(run_diagnostics.get(competitor_name) or {})
             detail.setdefault("competitor", competitor_name)
             detail.setdefault("gmap_url", competitor_obj.get("gmap_url"))
             detail["posts_found"] = posts_found
@@ -1246,6 +1416,12 @@ def scrape_competitors(project_id):
             detail["public_posts"] = sum(
                 1 for post in posts if (post or {}).get("post_source") == "public"
             )
+            detail["reviews_saved"] = reviews_saved
+            detail["place_profile"] = profile or None
+            if cards_skipped_for_competitor:
+                detail["cards_skipped"] = cards_skipped_for_competitor
+            if unverified_skipped_for_competitor:
+                detail["unverified_skipped"] = unverified_skipped_for_competitor
             detail.setdefault("status", "SUCCESS" if posts_found else "NO_POSTS")
             detail.setdefault("error", None)
             detail["captcha_required"] = bool(

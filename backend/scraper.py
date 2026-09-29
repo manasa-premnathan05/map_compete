@@ -21,6 +21,14 @@ except ImportError:  # pragma: no cover - allow running from any cwd
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from place_identity import extract_place_identity
 
+try:
+    from topic_classifier import classify_topic, classify_sentiment, infer_industry
+except ImportError:  # pragma: no cover - allow running from any cwd
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from topic_classifier import classify_topic, classify_sentiment, infer_industry
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,6 +41,13 @@ class GoogleMapsScraper:
         # Requirement 21: per-competitor statistics of the latest run, consumed
         # by the API to build the persistent scraping log.
         self.last_run_diagnostics: Dict[str, Dict] = {}
+        # Industry profile used for topic classification (cafe / salon /
+        # fashion / ecommerce / generic). ``None`` keeps the generic profile.
+        self.industry: Optional[str] = None
+        # Google Maps profile statistics (rating / review count / address /
+        # category) captured while the place page was open during scraping.
+        # Consumed by the API so review charts use real scraped values.
+        self.last_place_profiles: Dict[str, Dict] = {}
 
     def setup_driver(self):
         """Setup Chrome WebDriver with appropriate options"""
@@ -479,16 +494,171 @@ class GoogleMapsScraper:
             return result
         finally:
             self.close_driver()
+    def _read_current_place_profile(self, fallback_name: str = None) -> Optional[Dict]:
+        """Read Google Maps profile statistics from the currently open page.
+
+        Returns ``{'name', 'address', 'category', 'rating', 'review_count'}``
+        or ``None`` when nothing usable could be read. Used by the scrape flow
+        so the review-volume / rating charts show real scraped values instead
+        of empty placeholders.
+        """
+        if not self.driver:
+            return None
+
+        name = None
+        address = None
+        category = None
+        rating = None
+        review_count = None
+
+        try:
+            for heading in self.driver.find_elements(By.TAG_NAME, "h1"):
+                text = (heading.text or '').strip()
+                if text:
+                    name = text
+                    break
+        except Exception:
+            pass
+
+        try:
+            for selector in ("button[data-item-id='address']", "[data-item-id='address']"):
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    raw = (elements[0].get_attribute('aria-label')
+                           or elements[0].text or '')
+                    address = raw.replace('Address:', '').strip() or None
+                    break
+        except Exception:
+            pass
+
+        try:
+            for selector in ("button[data-item-id='category']", "[data-item-id='category']"):
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    raw = (elements[0].get_attribute('aria-label')
+                           or elements[0].text or '')
+                    category = raw.strip() or None
+                    break
+        except Exception:
+            pass
+
+        # Rating and the *total* review count.
+        # Google renders several star labels on the pane:
+        #   "4.3 stars"                 -> the overall rating
+        #   "848 reviews"               -> the total number of reviews
+        #   "5 stars, 548 reviews"      -> one row of the star breakdown
+        # The breakdown rows must never be mistaken for the total.
+        try:
+            for el in self.driver.find_elements(By.CSS_SELECTOR, "[aria-label*='star']"):
+                label = (el.get_attribute('aria-label') or '').strip()
+                if not label:
+                    continue
+                # Skip the per-star breakdown rows.
+                if re.match(r'^\s*[1-5]\s*stars?\s*,', label, re.I):
+                    continue
+                if rating is None:
+                    rating_match = re.search(r'([1-5](?:\.[0-9])?)\s*stars?', label, re.I)
+                    if rating_match:
+                        rating = float(rating_match.group(1))
+                count_match = re.search(r'([\d,]+)\s*reviews?\s*$', label, re.I)
+                if review_count is None and count_match:
+                    review_count = int(count_match.group(1).replace(',', ''))
+                if rating is not None and review_count is not None:
+                    break
+        except Exception:
+            pass
+
+        # Total review count fallbacks (labels like "848 reviews" carry no
+        # digit before "stars", so they are handled separately).
+        if review_count is None:
+            try:
+                candidates = []
+                for selector in (
+                    "[aria-label*='reviews']",
+                    "[aria-label*='Reviews']",
+                    "[data-item-id='reviews']",
+                ):
+                    try:
+                        candidates.extend(self.driver.find_elements(By.CSS_SELECTOR, selector))
+                    except Exception:
+                        continue
+                for el in candidates[:60]:
+                    label = (el.get_attribute('aria-label') or el.text or '').strip()
+                    match = re.match(r'^\s*([\d,]+)\s*reviews?\s*$', label, re.I)
+                    if match:
+                        review_count = int(match.group(1).replace(',', ''))
+                        break
+                if review_count is None:
+                    # Last resort: any label that mentions reviews with a number.
+                    for el in candidates[:60]:
+                        label = (el.get_attribute('aria-label') or el.text or '').strip()
+                        match = re.search(r'([\d,]+)\s*reviews?', label, re.I)
+                        if match and not re.match(r'^\s*[1-5]\s*stars?\s*,', label, re.I):
+                            review_count = int(match.group(1).replace(',', ''))
+                            break
+            except Exception:
+                pass
+
+        # Per-star breakdown as shown on the place page
+        # ("5 stars, 548 reviews") - real Google Maps aggregates that the
+        # rating distribution chart can use before individual reviews exist.
+        rating_distribution = None
+        try:
+            star_rows = self.driver.find_elements(By.CSS_SELECTOR, "[aria-label*='star']")
+            distribution = {}
+            for el in star_rows[:30]:
+                label = (el.get_attribute('aria-label') or '').strip()
+                match = re.match(
+                    r'\s*([1-5])\s*stars?\s*,?\s+([\d,]+)\s*reviews?', label, re.I
+                )
+                if match:
+                    distribution[match.group(1)] = int(match.group(2).replace(',', ''))
+            if distribution:
+                rating_distribution = distribution
+        except Exception:
+            pass
+
+        # The star breakdown always sums to the total number of reviews, so
+        # use it when the count label was missing (or matched a smaller
+        # unrelated count elsewhere on the pane).
+        if rating_distribution:
+            distribution_total = sum(rating_distribution.values())
+            if review_count is None or review_count < distribution_total:
+                review_count = distribution_total
+
+        if not any((name, address, category, rating is not None, review_count is not None)):
+            return None
+
+        # Also capture the star breakdown so the review module has real
+        # aggregates even before individual reviews are collected.
+        return {
+            'name': name or fallback_name,
+            'address': address,
+            'category': category,
+            'rating': rating,
+            'review_count': review_count,
+            'rating_distribution': rating_distribution,
+        }
+
+
 
     def scrape_competitor_posts(self, competitor_name: str, gmap_url: str,
                                 window_days: int = 180,
-                                include_public: bool = True) -> List[Dict]:
+                                include_public: bool = True,
+                                industry: Optional[str] = None,
+                                expected_address: Optional[str] = None) -> List[Dict]:
         """
         Scrape Google Maps posts for a competitor
         Returns list of post dictionaries (owner updates first, then public)
         window_days: number of days to look back (default 180 for 6 months)
         include_public: also collect public (user generated) content
+        industry: topic profile (cafe / salon / fashion / ecommerce / generic)
+        expected_address: address stored for this competitor; used to confirm
+            the opened place page when Google's result carries a longer name
+            (e.g. "Zudio" vs "Zudio - Mahavir Astha").
         """
+        if industry:
+            self.industry = industry
         if not self.driver:
             self.setup_driver()
 
@@ -524,12 +694,92 @@ class GoogleMapsScraper:
 
             diagnostics['page_loaded'] = True
 
+            # A maps/search/ URL can leave Google on the result LIST instead of
+            # a place page (h1 = "Results"). Open the first matching listing
+            # directly by URL (clicking may open a new tab) so the profile,
+            # posts and reviews all describe this business.
+            try:
+                if '/maps/search/' in (self.driver.current_url or ''):
+                    place_links = self.driver.find_elements(
+                        By.CSS_SELECTOR, "a[href*='/maps/place/']"
+                    )[:6]
+                    for link in place_links:
+                        href = link.get_attribute('href') or ''
+                        if '/maps/place/' in href:
+                            self.driver.get(href)
+                            time.sleep(4)
+                            logger.info(f"Opened place page for {competitor_name}")
+                            break
+            except Exception as nav_error:
+                logger.debug(f"Could not open a place page for {competitor_name}: {nav_error}")
+
+            # Still on the result list? Then nothing on screen belongs to this
+            # business, so no profile/posts are taken from it.
+            still_on_list = '/maps/search/' in (self.driver.current_url or '')
+
+            # Capture the Google Maps profile statistics while the place page
+            # is open (rating / review count / star distribution / address).
+            # The API persists these so the review-volume charts use real
+            # values. Google renders the review summary lazily (and sometimes
+            # only after a scroll), so retry briefly.
+            profile = None
+            try:
+                for attempt in range(4):
+                    profile = self._read_current_place_profile(competitor_name)
+                    if profile and profile.get('review_count') is not None:
+                        break
+                    try:
+                        self.driver.execute_script("window.scrollBy(0, 500);")
+                    except Exception:
+                        pass
+                    time.sleep(2)
+            except Exception as profile_error:
+                logger.debug(f"Could not read place profile for {competitor_name}: {profile_error}")
+                profile = None
+
             # Verify we're on the correct business
-            if not self._verify_business_page(competitor_name):
-                diagnostics['scrape_status'] = 'BUSINESS_MISMATCH'
-                logger.warning(f"Business verification failed for {competitor_name} - continuing anyway")
-            else:
+            verified = not still_on_list
+            if still_on_list:
+                diagnostics['scrape_status'] = 'LIST_PAGE'
+                diagnostics['error_message'] = (
+                    'Google Maps stayed on the results list; no place page opened'
+                )
+                logger.warning(f"Result list page for {competitor_name} - no place page opened")
+            elif self._verify_business_page(competitor_name):
                 diagnostics['business_verified'] = True
+            else:
+                # Another business (e.g. the top search hit "The Brew Zone"
+                # for a competitor named "The Brew") must never contribute a
+                # profile, posts or reviews. The stored address is only used
+                # as a diagnostic hint, never to override the name check.
+                diagnostics['scrape_status'] = 'BUSINESS_MISMATCH'
+                if profile:
+                    diagnostics['address_matches_found_page'] = self._addresses_match(
+                        expected_address, profile.get('address')
+                    )
+                verified = False
+                logger.warning(f"Business verification failed for {competitor_name} - continuing anyway")
+
+            # Keep the profile only when the opened page really is this
+            # business: a maps/search/ URL can land on a different listing
+            # (e.g. "Cafe Goodluck" -> "Good Luck Restaurant"), and a wrong
+            # profile would poison the review charts.
+            if profile and verified:
+                self.last_place_profiles[competitor_name] = profile
+                diagnostics['place_profile'] = profile
+            elif profile:
+                diagnostics['place_profile_rejected'] = (
+                    'result list page' if still_on_list else 'business name mismatch'
+                )
+
+            if still_on_list:
+                # Nothing below belongs to this business: return empty rather
+                # than store other listings' posts/reviews as our data.
+                diagnostics['posts_extracted'] = 0
+                diagnostics['scrape_status'] = 'NO_POSTS'
+                logger.info(f"Skipped scraping {competitor_name}: no place page opened")
+                self.last_run_diagnostics[competitor_name] = diagnostics
+                return []
 
             # Try to find the posts section
             posts_section = self._find_posts_section()
@@ -556,7 +806,9 @@ class GoogleMapsScraper:
             # appended afterwards and is never mixed into the owner block.
             if include_public:
                 try:
-                    public_posts = self._extract_public_posts(competitor_name, window_days)
+                    public_posts = self._extract_public_posts(
+                        competitor_name, window_days, industry=industry
+                    )
                     if public_posts:
                         posts = list(posts) + public_posts
                 except Exception as public_error:
@@ -590,6 +842,7 @@ class GoogleMapsScraper:
             len((post or {}).get('image_urls') or []) for post in posts
         )
         logger.info(f"Scrape diagnostics for {competitor_name}: {diagnostics}")
+        self.last_run_diagnostics[competitor_name] = diagnostics
 
         return posts
 
@@ -599,43 +852,15 @@ class GoogleMapsScraper:
         content = f"{post.get('post_url', '')}{post.get('text_content', '')}{post.get('published_date', '')}{post.get('competitor_name', '')}"
         return hashlib.sha256(content.encode('utf-8')).hexdigest()[:32]
 
-    def _detect_topic_and_keywords(self, text: str) -> Tuple[str, List[str]]:
-        """Detect topic and keywords from post text"""
-        if not text:
-            return "General Update", []
-        text_lower = text.lower()
-        topic = "General Update"
-        keywords = set()
-        
-        # Topic patterns across retail, fashion, salon, and hospitality
-        patterns = {
-            "New Collection": ["collection", "launch", "aw'26", "ss'26", "new arrival", "linenism", "flextech", "spring summer", "autumn winter", "arrived", "latest styles", "drop"],
-            "Offers & Discounts": ["offer", "discount", "sale", "save", "off", "deal", "price", "affordable", "pocket friendly", "festive offer", "special price", "flat"],
-            "Occasion & Party Wear": ["celebration", "grand", "wedding", "party", "occasion", "suits", "festive", "glam", "lehenga", "gown"],
-            "Workwear & Formals": ["workwear", "smart press", "formal", "office", "professional", "suits", "shirt", "trousers", "blazer"],
-            "Casual & Streetwear": ["casual", "polo", "t-shirt", "jeans", "movement", "fomo", "mid", "everyday", "trendy", "layer up", "hoodie", "sneakers"],
-            "Store & Visit": ["visit now", "visit:", "store", "located", "walk in", "shop now", "call now", "reach us"],
-            "Hair Care & Styling": ["hair", "cut", "color", "styling", "salon", "keratin", "spa", "highlights", "balayage", "blowdry"],
-            "Skin & Wellness": ["facial", "glow", "skin", "beauty", "treatment", "massage", "wellness", "skincare", "cleanse"]
-        }
-        
-        for top, kws in patterns.items():
-            matched = [k for k in kws if k in text_lower]
-            if matched:
-                topic = top
-                keywords.update(matched)
-                break
-                
-        # Extract meaningful domain words as keywords
-        words = re.findall(r'\b[a-zA-Z]{4,}\b', text_lower)
-        stopwords = {'this', 'that', 'with', 'from', 'your', 'have', 'more', 'still', 'finding', 'cause', 'what', 'stay', 'built', 'next', 'into', 'they', 'them', 'their', 'about', 'just'}
-        for w in words:
-            if w not in stopwords:
-                keywords.add(w)
-                if len(keywords) >= 8:
-                    break
-                    
-        return topic, list(keywords)[:6]
+    def _detect_topic_and_keywords(self, text: str,
+                                   industry: Optional[str] = None) -> Tuple[str, List[str]]:
+        """Detect topic and keywords from post text.
+
+        Delegates to the shared industry-aware classifier so a cafe review is
+        never labelled with fashion topics (and vice versa). The industry comes
+        from the project field / profile via ``infer_industry``.
+        """
+        return classify_topic(text, industry=industry or self.industry)
 
     def _parse_date(self, date_text: str) -> Optional[str]:
         """Parse various date formats from Google Maps to ISO format, or return None if unparseable"""
@@ -890,13 +1115,103 @@ class GoogleMapsScraper:
             return False
 
     def _names_match(self, found_name: str, expected_name: str) -> bool:
-        """Compare business names with fuzzy matching"""
+        """Compare business names with conservative fuzzy matching.
+
+        The two names must be the same business: an exact match, or one name
+        with only *qualifier* words added (branch, city, "Cafe", "Store").
+        "The Brew" must NOT match "The Brew Zone" (a different cafe) and
+        "Cafe Goodluck" must not match "Good Luck Restaurant" — otherwise
+        another business' rating/reviews would be stored as ours.
+        """
         import re
-        # Normalize both names
-        found = re.sub(r'[^a-z0-9]+', '', found_name.lower())
-        expected = re.sub(r'[^a-z0-9]+', '', expected_name.lower())
-        # Check if one contains the other (handles slight variations)
-        return found in expected or expected in found or found == expected
+        QUALIFIERS = {
+            'the', 'cafe', 'cafes', 'coffee', 'restaurant', 'rest', 'resto',
+            'shop', 'stores', 'store', 'kitchen', 'house', 'co', 'and', 'near',
+            'west', 'east', 'north', 'south', 'central', 'bandra', 'mumbai',
+            'india', 'in', 'at', 'by', 'of', 'unit', 'road', 'rd', 'st',
+            'branch', 'outlet', 'the', 'corner', 'place', 'center', 'centre',
+            'city', 'gallery', 'junction', 'pvt', 'ltd', 'limited', 'nearby',
+        }
+
+        def tokens(value):
+            return [t for t in re.findall(r'[a-z0-9]+', value.lower()) if t]
+
+        found = tokens(found_name)
+        expected = tokens(expected_name)
+        if not found or not expected:
+            return False
+
+        found_joined = ''.join(found)
+        expected_joined = ''.join(expected)
+        if found_joined == expected_joined:
+            return True
+
+        longer, shorter = (found, expected) if len(found_joined) >= len(expected_joined) else (expected, found)
+        joined_longer, joined_shorter = ''.join(longer), ''.join(shorter)
+        if joined_shorter not in joined_longer:
+            return False
+
+        # Only qualifier words may make up the difference between the names.
+        extra = [word for word in longer if word not in shorter]
+        return all(word in QUALIFIERS for word in extra)
+
+    def _addresses_match(self, expected_address: str, found_address: Optional[str]) -> bool:
+        """Conservative address comparison used to confirm an opened listing.
+
+        Two addresses match when one contains the other or they share a
+        distinctive token (a building/sector number or a street name). Generic
+        words like "road", "west" or "mumbai" never count on their own, so
+        "5, S. P. Road, Bandra West" does not match "2, Chapel Rd, Bandra".
+        """
+        import re
+        if not expected_address or not found_address:
+            return False
+
+        def normalize(value):
+            return re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
+
+        norm_expected = normalize(expected_address)
+        norm_found = normalize(found_address)
+        if not norm_expected or not norm_found:
+            return False
+        if norm_expected in norm_found or norm_found in norm_expected:
+            return True
+
+        generic = {
+            'road', 'rd', 'street', 'st', 'west', 'east', 'north', 'south',
+            'mumbai', 'maharashtra', 'india', 'near', 'opposite', 'opp',
+            'ground', 'floor', 'building', 'colony', 'nagar', 'naka', 'main',
+            'first', 'second', 'third', 'bandra', 'sector', 'shop', 'flat',
+            'no', 'and', 'the', 'kamothe', 'panvel', 'navi',
+        }
+
+        def distinctive(value):
+            tokens = set()
+            for token in value.split():
+                if token.isdigit():
+                    # Building / shop / sector numbers count; postal codes do
+                    # not (every address in one district shares the pin code).
+                    if len(token) <= 3:
+                        tokens.add(token)
+                elif len(token) >= 4 and token not in generic:
+                    tokens.add(token)
+            return tokens
+
+        exp_distinct = distinctive(norm_expected)
+        found_distinct = distinctive(norm_found)
+        if not exp_distinct or not found_distinct:
+            return False
+
+        exp_numbers = {t for t in exp_distinct if t.isdigit()}
+        found_numbers = {t for t in found_distinct if t.isdigit()}
+        # Different door / sector numbers => different places.
+        if exp_numbers and found_numbers and exp_numbers.isdisjoint(found_numbers):
+            return False
+
+        # Require a shared anchor: street/establishment name or the number.
+        shared_words = (exp_distinct - exp_numbers) & (found_distinct - found_numbers)
+        shared_numbers = exp_numbers & found_numbers
+        return bool(shared_words or shared_numbers)
 
     def _find_posts_section(self):
         """Find the posts/updates section on Google Maps page"""
@@ -1262,13 +1577,17 @@ class GoogleMapsScraper:
         return any(marker in haystack for marker in self.PUBLIC_CONTENT_MARKERS)
 
     def _extract_public_posts(self, competitor_name: str, window_days: int = 180,
-                              limit: int = 20) -> List[Dict]:
+                              limit: int = 20,
+                              industry: Optional[str] = None) -> List[Dict]:
         """Collect *public* (user generated) content for one business.
 
         Google Maps listings mix updates published by the owner with content
         published by the public (reviews, community posts). Public posts are
         collected separately, tagged `post_source='public'` and stay hidden in
         the UI until the user asks to see them.
+
+        Review ratings (``aria-label="5 stars"``) are captured so the API can
+        persist them as real review rows for the review-intelligence module.
         """
         if not self.driver:
             return []
@@ -1324,8 +1643,24 @@ class GoogleMapsScraper:
                     except Exception:
                         relative_date = ''
 
+                    # Star rating of the review card ("aria-label=5 stars").
+                    rating = None
+                    try:
+                        star_el = element.find_element(
+                            By.XPATH, ".//*[@role='img'][contains(@aria-label, 'star')]"
+                        )
+                        star_label = star_el.get_attribute('aria-label') or ''
+                        star_match = re.search(r'(\d(?:\.\d)?)', star_label)
+                        if star_match:
+                            rating = int(float(star_match.group(1)))
+                    except Exception:
+                        rating = None
+
                     published_date = self._parse_date(relative_date) if relative_date else None
-                    if not self._is_within_window(published_date, window_days):
+                    # Reviews without a parseable date cannot be placed on the
+                    # timeline and are usually Google Maps place-suggestion
+                    # cards from a results list - never store those.
+                    if not published_date or not self._is_within_window(published_date, window_days):
                         continue
 
                     payload = {
@@ -1338,14 +1673,18 @@ class GoogleMapsScraper:
                         'detected_topic': None,
                         'detected_keywords': [],
                         'post_source': 'public',
+                        'rating': rating,
                         'raw_data': {
                             'post_source': 'public',
                             'content_type': 'public_content',
                             'author': author,
                             'relative_date': relative_date or None,
+                            'rating': rating,
                         },
                     }
-                    topic, keywords = self._detect_topic_and_keywords(payload['text_content'])
+                    topic, keywords = self._detect_topic_and_keywords(
+                        payload['text_content'], industry=industry
+                    )
                     payload['detected_topic'] = topic
                     payload['detected_keywords'] = keywords
                     content_hash = self._generate_content_hash(payload)
@@ -1399,7 +1738,9 @@ class GoogleMapsScraper:
             return False
 
     def scrape_multiple_competitors(self, competitors: List[Dict],
-                                    include_public: bool = True) -> Dict[str, List[Dict]]:
+                                    include_public: bool = True,
+                                    window_days: int = 180,
+                                    industry: Optional[str] = None) -> Dict[str, List[Dict]]:
         """
         Scrape posts for multiple competitors
         Returns dictionary mapping competitor name to list of posts
@@ -1410,6 +1751,8 @@ class GoogleMapsScraper:
         """
         all_posts = {}
         self.last_run_diagnostics = {}
+        if industry:
+            self.industry = industry
 
         try:
             self.setup_driver()
@@ -1442,8 +1785,19 @@ class GoogleMapsScraper:
 
                 try:
                     posts = self.scrape_competitor_posts(
-                        name, gmap_url, include_public=include_public
+                        name, gmap_url, window_days=window_days,
+                        include_public=include_public, industry=industry,
+                        expected_address=competitor.get('address'),
                     )
+                    # Per-place diagnostics recorded inside the run: did the
+                    # opened page really belong to this business, and was the
+                    # profile kept or rejected? Needed by the API before it
+                    # persists reviews.
+                    inner = dict(self.last_run_diagnostics.get(name) or {})
+                    if 'business_verified' in inner:
+                        detail['business_verified'] = inner['business_verified']
+                    if inner.get('place_profile_rejected'):
+                        detail['place_profile_rejected'] = inner['place_profile_rejected']
                     all_posts[name] = posts
                     detail['posts_found'] = len(posts)
                     detail['owner_posts'] = sum(
@@ -1455,6 +1809,9 @@ class GoogleMapsScraper:
                     detail['images_downloaded'] = sum(
                         len((post or {}).get('image_urls') or []) for post in posts
                     )
+                    profile = self.last_place_profiles.get(name)
+                    if profile:
+                        detail['place_profile'] = profile
                     detail['status'] = 'SUCCESS' if posts else 'NO_POSTS'
                     logger.info(f"Scraped {len(posts)} posts for {name}")
 
