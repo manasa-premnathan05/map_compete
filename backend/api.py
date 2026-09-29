@@ -615,16 +615,45 @@ def places_diagnostics():
     except Exception:
         database_connected = False
 
+    # Which concrete binaries the driver discovery would use (basenames only -
+    # never full paths or environment values).
+    browser_binaries = [os.path.basename(path)
+                        for path in GoogleMapsScraper._candidate_browser_binaries()]
+    driver_binaries = [os.path.basename(path)
+                       for path in GoogleMapsScraper._candidate_driver_paths()]
+
+    # Optional ?probe=1: actually start and close a browser. Answers "can this
+    # server launch a browser right now?" without touching Google Maps or the DB.
+    probe_ok = None
+    probe_error = None
+    if request.args.get('probe') == '1':
+        probe = GoogleMapsScraper(headless=True)
+        try:
+            probe.setup_driver()
+            probe_ok = True
+        except Exception as exc:
+            probe_ok = False
+            probe_error = '%s: %s' % (type(exc).__name__, str(exc)[:300])
+        finally:
+            try:
+                probe.close_driver()
+            except Exception:
+                pass
+
     last_search = _LAST_PLACE_DIAGNOSTICS.get('search')
     return jsonify({
         "selenium_available": selenium_available,
-        "chrome_available": chrome_available,
-        "chromedriver_available": chromedriver_available,
-        "chromedriver_note": (None if chromedriver_available else
+        "chrome_available": chrome_available or bool(browser_binaries),
+        "chrome_binaries": browser_binaries,
+        "chromedriver_available": chromedriver_available or bool(driver_binaries),
+        "chromedriver_binaries": driver_binaries,
+        "chromedriver_note": (None if (chromedriver_available or driver_binaries) else
                               "Selenium resolves a matching driver automatically "
-                              "when CHROMEDRIVER_PATH is not set"),
+                              "when no local driver is found"),
         "google_maps_reachable": maps_reachable,
         "google_maps_reason": maps_reason,
+        "browser_start_probe": probe_ok,
+        "browser_start_error": probe_error,
         "last_test_state": (last_search or {}).get('state'),
         "last_search": last_search,
         "last_resolve": _LAST_PLACE_DIAGNOSTICS.get('resolve'),

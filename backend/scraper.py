@@ -50,8 +50,55 @@ class GoogleMapsScraper:
         # Consumed by the API so review charts use real scraped values.
         self.last_place_profiles: Dict[str, Dict] = {}
 
+    @staticmethod
+    def _candidate_browser_binaries():
+        """Browser binaries to try, in order (env first, then known locations)."""
+        import shutil
+
+        candidates = [os.environ.get('CHROME_BINARY'), os.environ.get('CHROME_PATH'),
+                      '/usr/bin/chromium', '/usr/bin/chromium-browser',
+                      '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable']
+        for name in ('chromium', 'chromium-browser', 'google-chrome',
+                     'google-chrome-stable', 'chrome'):
+            candidates.append(shutil.which(name))
+
+        ordered = []
+        for candidate in candidates:
+            if candidate and candidate not in ordered and os.path.exists(candidate):
+                ordered.append(candidate)
+        return ordered
+
+    @staticmethod
+    def _candidate_driver_paths():
+        """ChromeDriver binaries to try, in order (env first, then known paths).
+
+        Debian's chromium-driver package has shipped the driver at more than one
+        path across releases, and Render's image pins a single one - so every
+        candidate is considered rather than trusting one path.
+        """
+        import shutil
+
+        candidates = [os.environ.get('CHROMEDRIVER_PATH'),
+                      '/usr/bin/chromium-driver', '/usr/bin/chromedriver',
+                      '/usr/lib/chromium/chromedriver']
+        for name in ('chromedriver', 'chromium-driver'):
+            candidates.append(shutil.which(name))
+
+        ordered = []
+        for candidate in candidates:
+            if candidate and candidate not in ordered and os.path.exists(candidate):
+                ordered.append(candidate)
+        return ordered
+
     def setup_driver(self):
-        """Setup Chrome WebDriver with appropriate options"""
+        """Start Chrome/Chromium using several discovery strategies.
+
+        Render's image provides the browser and driver through CHROME_BINARY /
+        CHROMEDRIVER_PATH, but a single wrong path used to make every Google
+        Maps call fail. Each candidate driver (and finally Selenium Manager) is
+        tried instead; if none works, a WebDriverException carrying a concise,
+        credential-free reason is raised so callers can report BROWSER_ERROR.
+        """
         chrome_options = Options()
         if self.headless:
             chrome_options.add_argument("--headless")
@@ -61,27 +108,40 @@ class GoogleMapsScraper:
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
-        # Container/ARM support: when running inside Docker (Oracle VM) the image
-        # ships Debian's chromium + version-matched chromium-driver, so their
-        # paths are injected through env vars instead of Selenium Manager
-        # (which would try to download an x86-only driver).
-        # Locally the env vars are unset and behaviour is unchanged.
-        chrome_binary = os.environ.get("CHROME_BINARY") or os.getenv("CHROME_PATH")
-        if chrome_binary:
-            chrome_options.binary_location = chrome_binary
-        driver_path = os.environ.get("CHROMEDRIVER_PATH")
+        binaries = self._candidate_browser_binaries()
+        if binaries:
+            chrome_options.binary_location = binaries[0]
+
+        attempts = []
+        for driver_path in self._candidate_driver_paths():
+            try:
+                self.driver = webdriver.Chrome(
+                    service=Service(executable_path=driver_path),
+                    options=chrome_options)
+                attempts.append(os.path.basename(driver_path) + ': ok')
+                break
+            except Exception as exc:
+                self.driver = None
+                attempts.append('%s: %s' % (os.path.basename(driver_path),
+                                            type(exc).__name__))
+        if self.driver is None:
+            try:
+                self.driver = webdriver.Chrome(options=chrome_options)
+                attempts.append('selenium-manager: ok')
+            except Exception as exc:
+                self.driver = None
+                attempts.append('selenium-manager: ' + type(exc).__name__)
+
+        if self.driver is None:
+            reason = ' | '.join(attempts) or 'no browser or driver candidates found'
+            logger.error("Could not start a browser: %s", reason)
+            raise WebDriverException('no usable browser/driver found (%s)' % reason)
 
         try:
-            if driver_path:
-                service = Service(executable_path=driver_path)
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            else:
-                self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.set_page_load_timeout(30)
-            logger.info("WebDriver setup successful")
-        except Exception as e:
-            logger.error(f"Failed to setup WebDriver: {e}")
-            raise
+        except Exception:
+            pass
+        logger.info("WebDriver setup successful")
 
     def close_driver(self):
         """Close the WebDriver"""
