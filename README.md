@@ -16,22 +16,37 @@ MapCompete automates the full pipeline from competitor discovery to content gene
 
 ## Architecture
 
+Production (target):
+
+```
+Vercel (frontend, static + /api rewrite)
+   └──> Render Web Service (Flask + Gunicorn + Selenium/Chromium, Docker)
+            └──> MongoDB Atlas (all application data)
+```
+
 ```
 ├── backend/
-│   ├── api.py              # Flask REST API
-│   ├── database.py         # SQLite schema & operations
-│   ├── scraper.py          # Selenium Google Maps scraper
+│   ├── api.py              # Flask REST API (46 endpoints, gunicorn-ready)
+│   ├── database.py         # MongoDB (PyMongo) persistence layer - same API
+│   │                       #   as the old SQLite DatabaseManager
+│   ├── scraper.py          # Selenium Google Maps scraper (on-demand only)
 │   ├── ai_service.py       # AI providers (Groq, Gemini) with fallbacks
 │   └── place_identity.py   # Canonical Google Maps identity resolution
 │
 ├── frontend/
 │   ├── index.html          # Single-page application
+│   ├── vercel.json         # /api/* rewrite -> Render backend
 │   └── js/
 │       ├── app.js          # Main app router
 │       └── components/     # Dashboard, Competitors, Posts, Analytics, Ideas
 │
-└── database.db             # SQLite database (auto-created)
+├── docker-compose.yml      # optional local full-stack run
+├── render.yaml             # Render blueprint (Docker web service)
+└── DEPLOYMENT.md           # step-by-step Vercel + Render + Atlas guide
 ```
+
+There is **no local database file**: MongoDB Atlas is the only store, and a
+fresh deployment starts with an empty database (no seed/demo data).
 
 ## Key Features
 
@@ -60,11 +75,12 @@ MapCompete automates the full pipeline from competitor discovery to content gene
 - **Complete Update**: Ready-to-post text, keywords, CTA, image concept, suggested posting time
 - **Duplicate Prevention** against existing generated ideas
 
-## Quick Start
+## Quick Start (local development)
 
 ### Prerequisites
-- Python 3.9+
-- Chrome/Chromium (for Selenium)
+- Python 3.11+
+- A **MongoDB Atlas** cluster (free M0) and its `mongodb+srv://` URI
+- Chrome/Chromium (for Selenium; on Windows a local Chrome is auto-detected)
 - Node.js (optional, for frontend dev server)
 
 ### Installation
@@ -77,28 +93,35 @@ cd mapcompete
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install Python dependencies
-pip install -r requirements.txt
+# Install Python dependencies (includes pymongo)
+pip install -r backend/requirements.txt
 
-# Set environment variables (create .env file)
+# Configure environment
 cp .env.example .env
-# Edit .env with your API keys:
-# GROQ_API_KEY=your_groq_key
-# GEMINI_API_KEY=your_gemini_key
+# Edit .env: set MONGODB_URI (Atlas SRV string) and GROQ_API_KEY at minimum
+```
 
-# Start backend API (port 5000)
-cd backend
-python api.py
+### Run
 
-# Start frontend (port 3000)
-cd ../frontend
-python -m http.server 3000
+```bash
+# Backend (API on http://localhost:10000 by default, PORT is configurable)
+python backend/api.py
+
+# Frontend (any static server; for example)
+cd frontend && python -m http.server 3000
+# -> open http://localhost:3000 (the frontend calls http://localhost:10000/api)
+```
+
+Optional full stack with Docker (backend + nginx frontend):
+
+```bash
+docker compose up --build   # API http://localhost:5000 (proxied), frontend :3000
 ```
 
 ### Access
 - Frontend: http://localhost:3000
-- API: http://localhost:5000
-- Health check: http://localhost:5000/api/health
+- API: http://localhost:10000 (or :5000 through the Docker proxy)
+- Health check: http://localhost:10000/api/health
 
 ## API Endpoints
 
@@ -138,18 +161,23 @@ python -m http.server 3000
 - `POST /api/projects/<id>/complete-update` - Generate complete update
 - `GET /api/projects/<id>/generated-ideas` - List generated ideas
 
-## Database Schema (Key Tables)
+## Database Collections (MongoDB Atlas)
 
-| Table | Purpose |
-|-------|---------|
+| Collection | Purpose |
+|------------|---------|
 | `projects` | Project metadata, primary business |
-| `places` | Canonical Google Maps places |
-| `project_places` | Project ↔ Place relationships (role: primary/competitor) |
+| `places` | Canonical Google Maps places (unique `place_key`) |
 | `competitors` | Project-specific competitor tracking |
-| `posts` | Scraped Google Maps posts/updates |
-| `scraping_logs` | Persistent scraping run records |
+| `posts` | Scraped Google Maps posts/updates (unique `content_hash`) |
+| `post_competitors` | Post ↔ competitor share links (dedup across projects) |
+| `reviews` | Scraped Google Maps reviews (unique content hash) |
+| `keywords` | Project keywords |
 | `generated_ideas` | AI-generated content ideas |
-| `post_competitors` | Many-to-many post ↔ competitor |
+| `scraping_logs` | Persistent scraping run records |
+| `counters` | Atomic numeric-id allocation (application-level `id`s) |
+
+Indexes are created idempotently at startup. `project_places` from the old
+schema is derived on the fly (competitors with a `place_id`).
 
 ## AI Providers
 
@@ -160,29 +188,38 @@ python -m http.server 3000
 ## Environment Variables
 
 ```env
+# Required - MongoDB Atlas connection (never commit the real value)
+MONGODB_URI=mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/
+MONGODB_DATABASE=competitor_intelligence
+
 # Required for AI features
 GROQ_API_KEY=your_groq_api_key
 GEMINI_API_KEY=your_gemini_api_key
 
+# Server
+PORT=10000                     # Render injects its own $PORT
+CORS_ORIGINS=*                 # production: https://your-app.vercel.app
+
 # Optional
 FLASK_ENV=development
-FLASK_DEBUG=1
 ```
 
 ## Testing
 
 ```bash
-# Run frontend UI verification
-python verify_frontend_ui.py
+# Offline unit tests for the MongoDB persistence layer (in-memory mongomock)
+pip install mongomock
+python backend/test_database_mongo.py
 
-# Test API endpoints
-cd backend
-python -c "
-import sys; sys.path.insert(0, '.')
-from api import app
-with app.test_client() as c:
-    print(c.get('/api/health').get_json())
-"
+# Flask API contract tests (in-memory mongomock, no server needed)
+python backend/test_api_mongomock.py
+
+# Live Atlas connectivity check (needs MONGODB_URI in .env) - the ONE
+# environment-dependent test
+python backend/test_mongodb.py
+
+# Full frontend UI verification (needs a running backend + Atlas)
+python verify_frontend_ui.py
 ```
 
 ## Project Structure
@@ -191,29 +228,35 @@ with app.test_client() as c:
 mapcompete/
 ├── .gitignore
 ├── README.md
-├── requirements.txt
+├── DEPLOYMENT.md            # Vercel + Render + MongoDB Atlas guide
+├── render.yaml              # Render blueprint
+├── docker-compose.yml
 ├── .env.example
 ├── backend/
+│   ├── requirements.txt     # includes pymongo
 │   ├── api.py
-│   ├── database.py
+│   ├── database.py          # MongoDB persistence layer
 │   ├── scraper.py
 │   ├── ai_service.py
 │   ├── place_identity.py
-│   └── __init__.py
-├── frontend/
-│   ├── index.html
-│   ├── js/
-│   │   ├── app.js
-│   │   └── components/
-│   │       ├── dashboard.js
-│   │       ├── competitors.js
-│   │       ├── posts.js
-│   │       ├── analytics.js
-│   │       ├── ideas.js
-│   │       └── api.js
-│   └── css/
-│       └── (embedded in index.html)
-└── database.db
+│   ├── Dockerfile.backend
+│   ├── docker-entrypoint.sh
+│   ├── test_database_mongo.py   # offline unit tests (mongomock)
+│   ├── test_api_mongomock.py    # API contract tests (mongomock)
+│   └── test_mongodb.py          # live Atlas connectivity check
+└── frontend/
+    ├── index.html
+    ├── vercel.json          # /api/* -> Render rewrite
+    ├── nginx.conf
+    └── js/
+        ├── app.js
+        └── components/
+            ├── dashboard.js
+            ├── competitors.js
+            ├── posts.js
+            ├── analytics.js
+            ├── ideas.js
+            └── api.js
 ```
 
 ## License

@@ -1,0 +1,33 @@
+# Render blueprint: Flask + Selenium/Chromium backend backed by MongoDB Atlas.
+# Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# (Docker runtime is required so Chromium/ChromeDriver are available for the
+#  on-demand Google Maps scraper; scraping only runs when a user presses
+#  Scrape - the service is request-driven, no background workers.)
+services:
+  - type: web
+    name: mapcompete-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.backend
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health
+    # Render injects $PORT automatically; the entrypoint binds 0.0.0.0:$PORT.
+    envVars:
+      - key: MONGODB_URI
+        sync: false        # paste your Atlas mongodb+srv:// URI (secret)
+      - key: MONGODB_DATABASE
+        value: competitor_intelligence
+      - key: CORS_ORIGINS
+        value: https://YOUR-APP.vercel.app   # <- set your real Vercel domain
+      - key: GROQ_API_KEY
+        sync: false        # secret
+      - key: GEMINI_API_KEY
+        sync: false        # secret (optional)
+      - key: GROK_API_KEY
+        sync: false        # secret (legacy alias, optional)
+      - key: GUNICORN_WORKERS
+        value: "2"         # Render Free has 512 MB RAM - keep workers low
+      - key: GUNICORN_TIMEOUT
+        value: "1800"      # project-wide scrapes can take minutes
+      - key: FLASK_ENV
+        value: production

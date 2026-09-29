@@ -1,0 +1,20 @@
+# Keep the Linux build context clean and small.
+# (A Windows venv/ inside the context would bloat the image and mix
+#  x86 DLLs into the ARM build - it must never be copied.)
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+logs/
+data/
+.git
+.gitignore
+# MongoDB holds all application data: never bake local secrets or legacy
+# SQLite files into the image.
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3

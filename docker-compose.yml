@@ -1,38 +1,57 @@
-version: '3.8'
-
+# =============================================================================
+# map_competitor - full stack Docker Compose
+#
+#   backend : Flask + Gunicorn + Selenium/Chromium -> MongoDB Atlas
+#   frontend: static site + nginx proxy for /api (optional; Vercel serves the
+#             production frontend, this container is for local testing)
+#
+# Local development ....: docker compose up --build      (API :5000, FE :3000)
+#
+# Application data lives in MongoDB Atlas - NO local database volume exists.
+# Secrets (MONGODB_URI / GROQ_API_KEY / GEMINI_API_KEY) are read from the
+# untracked .env file in the project root - they are NEVER committed.
+# =============================================================================
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.backend
+    container_name: map_competitor_backend
     ports:
-      - "5000:5000"
+      - "${API_PORT:-5000}:10000"
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GROK_API_KEY=${GROK_API_KEY}
-      - FLASK_ENV=production
-    volumes:
-      - ./backend/data:/app/data
+      MONGODB_URI: "${MONGODB_URI:-}"
+      MONGODB_DATABASE: "${MONGODB_DATABASE:-competitor_intelligence}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GROK_API_KEY: "${GROK_API_KEY:-}"          # legacy alias read by ai_service
+      PORT: "10000"
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-3}"
+      GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-1800}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+      FLASK_ENV: "production"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend
+    container_name: map_competitor_frontend
     ports:
-      - "3000:80"
+      - "${WEB_PORT:-3000}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
-
-  # Optional: Redis for caching
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
-
-# volumes:
-#   redis_data:
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

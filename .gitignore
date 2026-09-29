@@ -28,10 +28,10 @@ ENV/
 
 # Environment variables
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# Database
+# Database files (legacy SQLite - never committed; MongoDB holds all data)
 *.db
 *.sqlite
 *.sqlite3
@@ -55,6 +55,8 @@ Thumbs.db
 *.tmp
 *.temp
 temp/
+*.out
+*.err
 
 # Debug files
 debug_*.html

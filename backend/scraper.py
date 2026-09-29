@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, WebDriverException
 import logging
 
@@ -60,8 +61,22 @@ class GoogleMapsScraper:
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
+        # Container/ARM support: when running inside Docker (Oracle VM) the image
+        # ships Debian's chromium + version-matched chromium-driver, so their
+        # paths are injected through env vars instead of Selenium Manager
+        # (which would try to download an x86-only driver).
+        # Locally the env vars are unset and behaviour is unchanged.
+        chrome_binary = os.environ.get("CHROME_BINARY") or os.getenv("CHROME_PATH")
+        if chrome_binary:
+            chrome_options.binary_location = chrome_binary
+        driver_path = os.environ.get("CHROMEDRIVER_PATH")
+
         try:
-            self.driver = webdriver.Chrome(options=chrome_options)
+            if driver_path:
+                service = Service(executable_path=driver_path)
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.set_page_load_timeout(30)
             logger.info("WebDriver setup successful")
         except Exception as e:
@@ -1314,7 +1329,7 @@ class GoogleMapsScraper:
         return None
 
     def _extract_posts_from_section(self, posts_section, competitor_name: str,
-                                    window_days: int = 90,
+                                    window_days: int = 180,
                                     post_source: str = 'owner') -> List[Dict]:
         """Extract individual posts from the posts section with continuous scrolling.
 
@@ -1347,7 +1362,7 @@ class GoogleMapsScraper:
                             continue
                         seen_hashes.add(h)
                         
-                        # Filter by window (default 90 days / 3 months)
+                        # Filter by window (default 180 days / 6 months)
                         if self._is_within_window(post_data.get('published_date'), window_days):
                             posts.append(post_data)
                             logger.info(f"Extracted post {len(posts)}: [{post_data.get('published_date')}] ({post_data.get('detected_topic')}) {post_data['text_content'][:50]}...")

@@ -55,18 +55,51 @@ def _bool_arg(name: str, default: bool = True) -> bool:
     return str(value).strip().lower() not in ('0', 'false', 'no', 'off')
 
 
-from database import DatabaseManager
+from database import DatabaseManager, DatabaseUnavailableError
 from scraper import GoogleMapsScraper
 from ai_service import AIServiceManager
 from topic_classifier import classify_sentiment, infer_industry
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend communication
+# CORS for the frontend. Default "*" keeps local dev (localhost:3000 -> :5000)
+# working out of the box. For production restrict to your Vercel domain:
+#   CORS_ORIGINS=https://your-app.vercel.app
+# (comma separated for several origins).
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _cors_origins}})  # Enable CORS for frontend communication
 
-# Initialize components
-DB_PATH = os.environ.get("DB_PATH") or str(Path(__file__).resolve().parent / "competitor_intelligence.db")
-db = DatabaseManager(DB_PATH)
+# Initialize components.
+# MongoDB Atlas connection: MONGODB_URI (mongodb+srv://...) and optional
+# MONGODB_DATABASE (default "competitor_intelligence") come from the
+# environment / .env - credentials are never hardcoded or logged.
+db = DatabaseManager()
 ai_service = AIServiceManager()
+
+
+@app.errorhandler(DatabaseUnavailableError)
+def _handle_database_unavailable(exc):
+    """MongoDB missing/unreachable -> clear 503, no credentials exposed."""
+    logger.error("Database unavailable: %s", exc)
+    return jsonify({"error": str(exc)}), 503
+
+
+@app.before_request
+def _require_database():
+    """Central guard: data endpoints fail fast with 503 when MongoDB is not
+    configured/connected (routes' broad excepts would otherwise report 500).
+    /api/health always answers so orchestrators can see the real state."""
+    if request.path == "/api/health" or not request.path.startswith("/api/"):
+        return None
+    if not db.available():
+        message = db._last_error or "MongoDB is not available."
+        logger.error("Request rejected, database unavailable: %s", message)
+        return jsonify({"error": message}), 503
+    return None
+
 
 
 def looks_like_place_card(text: str) -> bool:
@@ -158,8 +191,21 @@ def persist_competitor_profile(competitor_id: int, profile: dict) -> bool:
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
-    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+    """Health check endpoint: Flask liveness + MongoDB connectivity.
+
+    Never exposes credentials or the connection string. Returns HTTP 503
+    when the database is not configured or unreachable so orchestrators
+    (Render) can see the problem.
+    """
+    db_health = db.health()
+    payload = {
+        "status": "healthy" if db_health["ok"] else "degraded",
+        "database": "connected" if db_health["ok"] else "disconnected",
+        "timestamp": datetime.now().isoformat(),
+    }
+    if not db_health["ok"] and db_health.get("error"):
+        payload["database_error"] = db_health["error"]
+    return jsonify(payload), (200 if db_health["ok"] else 503)
 
 # Project endpoints
 @app.route('/api/projects', methods=['GET'])
@@ -1088,15 +1134,8 @@ def scrape_single_competitor(competitor_id):
 
         # Update competitor with scrape status
         try:
-            conn = db.get_connection()
-            cursor = conn.cursor()
             db_status = 'active' if scrape_status in ('SUCCESS', 'NO_POSTS') else scrape_status.lower()
-            cursor.execute(
-                '''UPDATE competitors SET last_scraped = CURRENT_TIMESTAMP, status = ? WHERE id = ?''',
-                (db_status, competitor_id)
-            )
-            conn.commit()
-            conn.close()
+            db.update_competitor_scrape_status(competitor_id, db_status)
         except Exception as e:
             logger.warning(f"Could not update competitor status: {e}")
 
@@ -1738,6 +1777,8 @@ def get_scraping_stats(project_id):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    # Render/Heroku-style platforms inject $PORT; local development defaults
+    # to 10000 (set PORT=5000 to keep the old local behaviour).
+    port = int(os.environ.get('PORT', 10000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)

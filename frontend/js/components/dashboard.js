@@ -488,7 +488,7 @@ export function initDashboard(api) {
           if (scrapeStatus === 'SUCCESS') {
             window.showToast?.(`Scrape completed for ${name}: ${summary.new_posts || 0} new updates, ${summary.duplicates_skipped || 0} duplicates skipped${warning}`, 'success');
           } else if (scrapeStatus === 'NO_POSTS') {
-            window.showToast?.(`No new updates published by ${name} in the last 3 months`, 'info');
+            window.showToast?.(`No new updates published by ${name} in the last 6 months`, 'info');
           } else if (scrapeStatus === 'CAPTCHA_REQUIRED') {
             window.showToast?.(`CAPTCHA required for ${name} - manual verification needed`, 'warning');
           } else if (scrapeStatus === 'TIMEOUT') {
@@ -1210,7 +1210,9 @@ export function initDashboard(api) {
       }
     });
 
-    // Quick Scrape Trigger
+    // Quick Scrape Trigger - scrapes every competitor SEQUENTIALLY through the
+    // per-competitor endpoint: each call is short enough to pass Vercel's
+    // proxy limit and data is saved after every single competitor.
     quickScrapeBtn?.addEventListener('click', async () => {
       const projectId = await resolveActiveProjectId();
       if (!projectId) {
@@ -1218,14 +1220,28 @@ export function initDashboard(api) {
         return;
       }
       window.showToast?.('Initiating Google Maps updates crawl...', 'info');
+      quickScrapeBtn.disabled = true;
       try {
-        await api.scrapeCompetitors(projectId);
-        window.showToast?.('Competitor updates successfully refreshed!', 'success');
+        const summary = await api.scrapeProjectSequentially(projectId, (done, total, name) => {
+          window.showToast?.(`Crawling ${done}/${total}: ${name}`, 'info');
+        });
+        if (summary.total === 0) {
+          window.showToast?.('No competitors with a Google Maps URL to crawl yet.', 'warning');
+        } else if (summary.failed > 0) {
+          window.showToast?.(
+            `Crawl finished: ${summary.succeeded}/${summary.total} scraped, ${summary.failed} failed.`,
+            'warning'
+          );
+        } else {
+          window.showToast?.(`Competitor updates successfully refreshed! (${summary.succeeded}/${summary.total} scraped)`, 'success');
+        }
         await loadDashboardData();
       } catch (err) {
-        // Even if mock scrape or testing URL, show informative status
-        window.showToast?.('Competitor crawl check complete: Repository up to date.', 'success');
+        console.error('Quick scrape failed:', err);
+        window.showToast?.(`Crawl failed: ${err.message}`, 'error');
         await loadDashboardData();
+      } finally {
+        quickScrapeBtn.disabled = false;
       }
     });
 

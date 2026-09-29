@@ -1275,7 +1275,11 @@ class GroqAIService(AIServiceProvider):
             """
             ideas_text = self._call_groq(prompt, max_tokens=2500, temperature=0.8)
             ideas = self._parse_ideas_response(ideas_text, count)
-            ideas = self._sanitize_ideas(ideas, competitor_names or [], our_biz)
+            # _sanitize_ideas is pure text post-processing but only exists on
+            # GeminiAIService; calling self._ here raised AttributeError on every
+            # request and silently pushed all idea generation into the template
+            # fallback. Reuse Gemini's implementation (as AIManager does below).
+            ideas = GeminiAIService()._sanitize_ideas(ideas, competitor_names or [], our_biz)
             return ideas
         except Exception as e:
             logger.error(f"Error generating ideas with Groq: {e}")

@@ -1135,7 +1135,7 @@ export function initCompetitors(api) {
           const summary = result.results || {};
           const warning = result.warning ? ` (${result.warning})` : '';
           if (result.scrape_status === 'NO_POSTS' || (summary.posts_found === 0 && !result.warning && !result.error)) {
-            window.showToast?.(`No updates published by competitor in the last 3 months`, 'info');
+            window.showToast?.(`No updates published by competitor in the last 6 months`, 'info');
           } else {
             window.showToast?.(
               `Scraping finished: ${summary.new_posts || 0} new updates, ${summary.duplicates_skipped || 0} duplicates skipped${warning}`,

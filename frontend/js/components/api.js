@@ -1,6 +1,27 @@
 // API Service for communicating with backend
+//
+// The API base URL is resolved at runtime so the SAME frontend works in every
+// environment without code changes:
+//   1. window.__API_BASE__  - explicit override (set it in index.html before
+//      app.js loads, if you ever need to point somewhere else).
+//   2. http://localhost:10000/api when the page itself is served from
+//      localhost - local development (matches .env.example PORT=10000).
+//   3. "/api" - relative path for production: Vercel forwards /api/* to the
+//      backend using the rewrite in frontend/vercel.json, and the Docker
+//      frontend (nginx) proxies /api/* to the backend container.
+function resolveApiBaseURL() {
+  if (typeof window !== 'undefined' && window.__API_BASE__) {
+    return window.__API_BASE__;
+  }
+  const host = (typeof window !== 'undefined' && window.location && window.location.hostname) || '';
+  if (!host || host === 'localhost' || host === '127.0.0.1') {
+    return 'http://localhost:10000/api';
+  }
+  return '/api';
+}
+
 export function initAPI() {
-  const BASE_URL = 'http://localhost:5000/api'; // Backend API URL
+  const BASE_URL = resolveApiBaseURL(); // Backend API URL
 
   return {
     // Project methods
@@ -146,6 +167,43 @@ export function initAPI() {
       });
       if (!response.ok) throw new Error('Failed to start scraping');
       return response.json();
+    },
+
+    // Scrape every competitor of a project ONE BY ONE via the existing
+    // per-competitor endpoint. The all-at-once project endpoint can run for
+    // ~10 minutes, which exceeds Vercel's ~120s proxy limit for rewrites to
+    // external origins; each single scrape finishes well within it. Results
+    // are saved competitor by competitor, so partial progress is never lost.
+    // onProgress(done, total, name) is optional (used for UI toasts).
+    scrapeProjectSequentially: async (projectId, onProgress) => {
+      const listResponse = await fetch(`${BASE_URL}/projects/${projectId}/competitors`);
+      if (!listResponse.ok) throw new Error('Failed to fetch competitors');
+      const payload = await listResponse.json();
+      const competitors = Array.isArray(payload) ? payload : (payload.competitors || []);
+      const targets = competitors.filter((c) => c && c.gmap_url);
+      const skipped = competitors.length - targets.length;
+      let succeeded = 0;
+      let failed = 0;
+      for (let i = 0; i < targets.length; i += 1) {
+        const competitor = targets[i];
+        if (typeof onProgress === 'function') {
+          onProgress(i + 1, targets.length, competitor.name);
+        }
+        try {
+          const response = await fetch(`${BASE_URL}/competitors/${competitor.id}/scrape`, {
+            method: 'POST'
+          });
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${response.status}`);
+          }
+          succeeded += 1;
+        } catch (err) {
+          failed += 1;
+          console.warn(`Scrape failed for ${competitor.name}:`, err);
+        }
+      }
+      return { total: targets.length, succeeded, failed, skipped };
     },
 
     scrapeCompetitor: async (competitorId) => {

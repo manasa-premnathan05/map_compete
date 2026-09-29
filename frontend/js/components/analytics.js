@@ -44,6 +44,9 @@ export function initAnalytics(api) {
   let activeGeoMetric = 'reviews'; // 'reviews', 'posts', 'rating'
   let trendTopicSelection = 'all'; // topic filter for the company trend lines
   let trendChartData = null;       // last trend-analysis payload (for re-rendering)
+  let lastAnalysis = null;         // in-memory AI analysis for the active project
+                                   // (session-only: /analyze is not persisted, so this
+                                   // keeps results visible after the post-run reload)
   let productGroupSelection = 'all'; // category filter for the product timeline
 
   // Format date safely
@@ -241,8 +244,8 @@ export function initAnalytics(api) {
     const container = document.getElementById('ai-competitive-intelligence');
     if (!container) return;
 
-    // Get analysis from market data (if available) or trigger analysis
-    const analysis = marketData?.analysis || marketData?.ai_analysis || null;
+    // Get analysis from market data (if available) or the session cache
+    const analysis = marketData?.analysis || marketData?.ai_analysis || lastAnalysis;
     
     if (!analysis) {
       container.innerHTML = `
@@ -538,6 +541,9 @@ export function initAnalytics(api) {
     try {
       const response = await api.analyzeProject(currentProjectId || 49);
       if (response.analysis) {
+        // Keep the result for this session so the reload below can render
+        // it (the backend does not persist analysis).
+        lastAnalysis = response.analysis;
         // Reload analytics to show new data
         await loadAnalyticsData();
       }
@@ -1919,9 +1925,13 @@ export function initAnalytics(api) {
 
   // Event Listeners
   function setupEventListeners() {
-    projectSelectEl?.addEventListener('change', loadAnalyticsData);
+    projectSelectEl?.addEventListener('change', () => {
+      lastAnalysis = null; // analysis belongs to the previous project
+      loadAnalyticsData();
+    });
     mobileProjectSelectEl?.addEventListener('change', (e) => {
       if (projectSelectEl) projectSelectEl.value = e.target.value;
+      lastAnalysis = null;
       loadAnalyticsData();
     });
 
