@@ -1,16 +1,19 @@
 #!/bin/sh
-# Startup script for the map_competitor backend container.
-#
-# All application data lives in MongoDB Atlas - there is NO local database
-# to seed or preserve. This script only starts Gunicorn (production WSGI
-# server for the Flask app), bound to 0.0.0.0:$PORT as Render expects.
+# Production entrypoint for the Flask backend on Render.
+# MongoDB Atlas is the only persistent database.
+# Selenium/Chromium is started only when a scraping request is made.
+
 set -e
 
 PORT="${PORT:-10000}"
-WORKERS="${GUNICORN_WORKERS:-3}"
+WORKERS="${GUNICORN_WORKERS:-1}"
 TIMEOUT="${GUNICORN_TIMEOUT:-1800}"
 
-echo "[entrypoint] Starting gunicorn (workers=$WORKERS, timeout=${TIMEOUT}s) on 0.0.0.0:${PORT}"
+echo "[entrypoint] Starting gunicorn"
+echo "[entrypoint] bind=0.0.0.0:${PORT}"
+echo "[entrypoint] workers=${WORKERS}"
+echo "[entrypoint] timeout=${TIMEOUT}s"
+
 exec gunicorn \
     --bind "0.0.0.0:${PORT}" \
     --workers "${WORKERS}" \

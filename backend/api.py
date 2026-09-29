@@ -504,8 +504,12 @@ def search_places():
         data = request.get_json() or {}
         query = (data.get('name') or data.get('query') or '').strip()
         location = (data.get('location') or '').strip() or None
-        max_results = data.get('max_results', 5)
-        
+        try:
+            max_results = int(data.get('max_results', 5) or 5)
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_results must be an integer"}), 400
+        max_results = max(1, min(max_results, 20))
+
         if not query:
             return jsonify({"error": "A business name is required"}), 400
         
@@ -982,44 +986,18 @@ def add_competitor(project_id):
 
 @app.route('/api/projects/<project_id>/places', methods=['GET'])
 def get_project_places(project_id):
-    """The canonical businesses this project tracks (one row per business)."""
-    logger.info(f"GET /api/projects/{project_id}/places called - VERSION 20260927_1430")
-    print(f"DEBUG: get_project_places called for project_id={project_id}", flush=True)
+    """The canonical businesses this project tracks."""
     try:
         project_id_int = int(project_id)
         places = db.get_project_places(project_id_int)
         return jsonify({
             "project_id": project_id_int,
             "places": places,
-            "own_place": db.get_project_place(project_id_int),
-            "_debug_version": "20260927_1430"
+            "own_place": db.get_project_place(project_id_int)
         })
     except Exception as e:
         logger.error(f"Error getting project places: {e}")
         return jsonify({"error": str(e)}), 500
-
-# Debug: Print when route is registered
-print(f"DEBUG: Route /api/projects/<project_id>/places registered - FILE_VERSION_20260927_1500", flush=True)
-
-print(f"DEBUG: Flask app created with name={app.name}", flush=True)
-
-# Debug: Log all requests
-@app.before_request
-def log_request():
-    print(f"DEBUG REQUEST: {request.method} {request.path} -> {request.full_path}", flush=True)
-
-
-@app.route('/api/debug/routes', methods=['GET'])
-def debug_routes():
-    """Debug endpoint to list all registered routes."""
-    routes = []
-    for rule in app.url_map.iter_rules():
-        routes.append({
-            'rule': rule.rule,
-            'endpoint': rule.endpoint,
-            'methods': list(rule.methods)
-        })
-    return jsonify({'routes': routes})
 
 @app.route('/api/projects/<int:project_id>/discover-competitors', methods=['POST'])
 def discover_project_competitors(project_id):

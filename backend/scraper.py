@@ -138,7 +138,10 @@ class GoogleMapsScraper:
             raise WebDriverException('no usable browser/driver found (%s)' % reason)
 
         try:
-            self.driver.set_page_load_timeout(30)
+            page_load_timeout = int(os.environ.get("GOOGLE_MAPS_PAGE_LOAD_TIMEOUT", "18"))
+            page_load_timeout = max(8, min(page_load_timeout, 60))
+            self.driver.set_page_load_timeout(page_load_timeout)
+            self.driver.set_script_timeout(15)
         except Exception:
             pass
         logger.info("WebDriver setup successful")
@@ -494,12 +497,16 @@ class GoogleMapsScraper:
                 return finish('BROWSER_ERROR',
                               'The browser session could not be created.')
 
+            navigation_timed_out = False
             try:
                 self.driver.get(search_url)
             except TimeoutException as exc:
+                # Selenium can time out after useful Maps DOM has already rendered.
+                # Keep the session alive and inspect the DOM before declaring failure.
+                navigation_timed_out = True
                 diagnostics['error_type'] = 'TimeoutException'
                 diagnostics['error'] = str(exc)[:300]
-                return finish('TIMEOUT', 'Google Maps did not finish loading in time.')
+                logger.warning("Google Maps navigation timed out; inspecting rendered DOM")
             except WebDriverException as exc:
                 diagnostics['error_type'] = type(exc).__name__
                 diagnostics['error'] = str(exc)[:300]
@@ -560,6 +567,11 @@ class GoogleMapsScraper:
                 result_cards=diagnostics.get('result_containers_found', 0),
                 place_links=diagnostics.get('place_links_found', 0),
             )
+
+            if navigation_timed_out and state_info.get('state') not in (
+                    'RESULTS', 'NO_RESULTS', 'CAPTCHA', 'CONSENT', 'BLOCKED',
+                    'PLACE_PROFILE'):
+                return finish('TIMEOUT', 'Google Maps did not finish loading in time.')
 
             # Google frequently answers a name+area search by redirecting straight
             # to the single matching business profile. That business IS the
@@ -962,12 +974,14 @@ class GoogleMapsScraper:
                 logger.warning("Place resolution driver failure: %s", exc)
                 return result
 
+            navigation_timed_out = False
             try:
                 self.driver.get(search_url)
             except TimeoutException:
-                result["state"] = "TIMEOUT"
-                result["message"] = "Google Maps did not finish loading in time."
-                return result
+                # A useful Maps profile can be rendered even when Selenium's
+                # navigation timer expires. Continue and inspect the DOM.
+                navigation_timed_out = True
+                logger.warning("Place resolution navigation timed out; inspecting rendered DOM")
             except WebDriverException as exc:
                 result["state"] = "BROWSER_ERROR"
                 result["message"] = "Google Maps could not be loaded by the server."
@@ -1119,9 +1133,13 @@ class GoogleMapsScraper:
                 result["state"] = "NO_RESULTS"
                 result["message"] = "Google Maps found no place for this name"
             else:
-                # A Maps page that could not be read is NOT an empty result.
+                # A navigation timeout is distinct from a genuine "no results".
+                # If no usable profile/no-results signal was rendered, preserve
+                # the timeout so the API can report an infrastructure failure.
                 state = (page_state or {}).get("state")
-                if state in (None, "UNKNOWN", "RESULTS"):
+                if navigation_timed_out and state in (None, "UNKNOWN", "RESULTS"):
+                    state = "TIMEOUT"
+                elif state in (None, "UNKNOWN", "RESULTS"):
                     state = "SELECTOR_FAILURE"
                 result["state"] = state
                 result["message"] = ((page_state or {}).get("message")
