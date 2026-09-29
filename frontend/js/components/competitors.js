@@ -409,13 +409,15 @@ export function initCompetitors(api) {
             </div>
             <p class="text-[11px] text-sand-500 mb-2 truncate" title="${comp.address}">${comp.address || locationText}</p>
 
+            ${comp.rating ? `
             <div class="flex items-center gap-2 mb-3 text-xs">
               <span class="text-amber-500 font-bold flex items-center gap-1">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="#D4A373" stroke="#B8824C" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                <span>${comp.rating || '4.6'}</span>
+                <span>${comp.rating}</span>
               </span>
-              <span class="text-[11px] text-sand-500">(${comp.review_count || '120'} reviews)</span>
+              ${comp.review_count ? `<span class="text-[11px] text-sand-500">(${comp.review_count} reviews)</span>` : ''}
             </div>
+            ` : ''}
 
             ${strengths.length > 0 ? `
               <div class="flex flex-wrap gap-1 mb-3">
@@ -678,6 +680,66 @@ export function initCompetitors(api) {
     const dashQuickAddBtn = document.getElementById('dash-quick-add-btn');
     dashQuickAddBtn?.addEventListener('click', resetModalToAddMode);
 
+    // Translate a failed Google Maps read into the most useful message we have.
+    // The backend tells a genuine empty search (status "no_results") apart from
+    // every scraper/infrastructure failure, so we never claim "no businesses"
+    // when the real problem is CAPTCHA / blocking / a browser problem.
+    const searchFailureMessage = (err) => {
+      const type = (err && err.errorType) || '';
+      const messages = {
+        CAPTCHA: "Google Maps temporarily presented an anti-automation challenge. Please try again later or paste the business's Google Maps profile URL.",
+        BLOCKED: 'Google Maps blocked this automated request. Please try again later or use a direct Google Maps profile URL.',
+        CONSENT: 'Google Maps is waiting for a consent decision, so the search could not run.',
+        TIMEOUT: 'Google Maps took too long to load. Please try again.',
+        BROWSER_ERROR: 'Google Maps could not be loaded by the server.',
+        SELECTOR_FAILURE: 'Google Maps loaded, but the server could not read its search results.',
+        PLACE_PROFILE: 'That search opened a single Google Maps business profile instead of a result list.',
+        UNKNOWN: 'Google Maps returned an unexpected page, so the results could not be read.',
+        SERVER_ERROR: 'The search could not be completed on the server.'
+      };
+      return messages[type] || (err && err.message) || 'Google Maps search failed.';
+    };
+
+    // Accept google.com/maps, www.google.com/maps and maps.google.com, with or
+    // without a scheme, and classify profile vs search links.
+    const normaliseMapsUrl = (raw) => {
+      let value = (raw || '').trim();
+      if (!value) return null;
+      if (!/^https?:\/\//i.test(value)) value = `https://${value.replace(/^\/+/, '')}`;
+      try {
+        const parsed = new URL(value);
+        const host = parsed.hostname.toLowerCase();
+        const mapsHost = host === 'maps.google.com'
+          || ((host === 'google.com' || host.endsWith('.google.com'))
+              && parsed.pathname.toLowerCase().startsWith('/maps'));
+        if (!mapsHost) return null;
+        return { url: value, parsed };
+      } catch (err) {
+        return null;
+      }
+    };
+
+    const isMapsSearchUrl = (parsed) => {
+      const target = `${parsed.pathname}${parsed.search}`.toLowerCase();
+      if (target.includes('/maps/place/')) return false;
+      return target.includes('/maps/search') || /[?&](q|query)=/.test(target);
+    };
+
+    // STEP 10: tell the user what Resolve will do with the pasted link.
+    const validateCompetitorUrlField = () => {
+      const raw = modalCompetitorUrl?.value?.trim();
+      if (!raw) return;
+      const normalised = normaliseMapsUrl(raw);
+      if (!normalised) {
+        window.showToast?.('That does not look like a Google Maps link. Paste a Google Maps business URL, or enter the name and use Search.', 'warning');
+        return;
+      }
+      if (normalised.url !== raw) modalCompetitorUrl.value = normalised.url;
+      if (isMapsSearchUrl(normalised.parsed)) {
+        window.showToast?.('This is a Google Maps search link. Resolve will search for the business from this link.', 'info');
+      }
+    };
+
     // Search button - searches Google Maps near project location for business name
     if (searchPlaceBtn) {
       searchPlaceBtn.addEventListener('click', async () => {
@@ -718,13 +780,25 @@ export function initCompetitors(api) {
             renderSearchResults(result.results);
             if (searchResultsDisplay) searchResultsDisplay.classList.remove('hidden');
             window.showToast?.(`Found ${result.results.length} matching businesses`, 'success');
-          } else {
+          } else if (result.status === 'no_results') {
+            // Google Maps loaded successfully and really has nothing to show.
             lastSearchResults = [];
-            window.showToast?.('No matching businesses found on Google Maps near this location', 'warning');
+            if (searchResultsDisplay) searchResultsDisplay.classList.add('hidden');
+            if (searchResultsList) searchResultsList.innerHTML = '';
+            window.showToast?.(`No businesses found for "${name}" near "${location}".`, 'warning');
+          } else {
+            // A readable-but-empty answer without the explicit no_results status
+            // is reported as a problem, never as "nothing found".
+            lastSearchResults = [];
+            if (searchResultsDisplay) searchResultsDisplay.classList.add('hidden');
+            window.showToast?.(result.message || 'Google Maps returned no readable results.', 'warning');
           }
         } catch (err) {
           console.error('Error searching places:', err);
-          window.showToast?.(`Search error: ${err.message}`, 'error');
+          lastSearchResults = [];
+          if (searchResultsDisplay) searchResultsDisplay.classList.add('hidden');
+          if (searchResultsList) searchResultsList.innerHTML = '';
+          window.showToast?.(searchFailureMessage(err), 'error');
         } finally {
           searchPlaceBtn.disabled = false;
           searchPlaceBtn.textContent = 'Search';
@@ -745,14 +819,31 @@ export function initCompetitors(api) {
 
     // Typing in the name / URL fields invalidates the previously selected
     // search result so Resolve and Save use exactly what the user typed.
+    // Any change to the typed name/URL invalidates the previous resolution, so a
+    // stale identity can never be attached to a different competitor.
+    const clearResolvedIdentity = () => {
+      if (resolvedPlaceKey) resolvedPlaceKey.value = '';
+      if (resolvedGooglePlaceId) resolvedGooglePlaceId.value = '';
+      if (resolvedCid) resolvedCid.value = '';
+      if (resolvedHexId) resolvedHexId.value = '';
+      if (resolvedPlaceDisplay) resolvedPlaceDisplay.classList.add('hidden');
+      if (resolvedPlaceDetails) resolvedPlaceDetails.innerHTML = '';
+      if (saveCompetitorBtn) saveCompetitorBtn.disabled = true;
+    };
+
     const clearSelectedSearchResult = () => {
-      if (!selectedSearchResult && selectedSearchResultIndex === null) return;
-      selectedSearchResult = null;
-      selectedSearchResultIndex = null;
-      renderSearchResults(lastSearchResults || []);
+      if (selectedSearchResult || selectedSearchResultIndex !== null) {
+        selectedSearchResult = null;
+        selectedSearchResultIndex = null;
+        renderSearchResults(lastSearchResults || []);
+      }
+      clearResolvedIdentity();
     };
     modalCompetitorName?.addEventListener('input', clearSelectedSearchResult);
-    modalCompetitorUrl?.addEventListener('input', clearSelectedSearchResult);
+    modalCompetitorUrl?.addEventListener('input', () => {
+      clearSelectedSearchResult();
+      validateCompetitorUrlField();
+    });
 
     // Resolve Place button - calls backend to resolve typed name/URL to canonical identity
     if (resolvePlaceBtn) {
@@ -801,6 +892,7 @@ export function initCompetitors(api) {
             if (identity.google_place_id) detailsHtml += `<div><strong>Place ID:</strong> <code class="bg-white px-1 rounded">${identity.google_place_id}</code></div>`;
             if (identity.hex_id) detailsHtml += `<div><strong>Hex Pair:</strong> <code class="bg-white px-1 rounded">${identity.hex_id}</code></div>`;
             if (identity.cid) detailsHtml += `<div><strong>CID:</strong> <code class="bg-white px-1 rounded">${identity.cid}</code></div>`;
+            if (identity.cid) detailsHtml += `<div><strong>CID:</strong> <code class="bg-white px-1 rounded">${identity.cid}</code></div>`;
             if (identity.identity_source) {
               const sourceLabel = identity.identity_source === 'name' ? 'Name only (weak)' : identity.identity_source;
               detailsHtml += `<div><strong>Source:</strong> ${sourceLabel} (confidence: ${identity.confidence})</div>`;
@@ -818,7 +910,7 @@ export function initCompetitors(api) {
             // Hide search results
             if (searchResultsDisplay) searchResultsDisplay.classList.add('hidden');
 
-            window.showToast?.('Place resolved to canonical Google Maps identity', 'success');
+            window.showToast?.('✓ Google Maps business resolved', 'success');
           } else {
             window.showToast?.(result.message || 'Could not resolve place on Google Maps', 'warning');
             if (resolvedPlaceDisplay) resolvedPlaceDisplay.classList.add('hidden');
@@ -826,7 +918,9 @@ export function initCompetitors(api) {
           }
         } catch (err) {
           console.error('Error resolving place:', err);
-          window.showToast?.(`Resolution error: ${err.message}`, 'error');
+          if (resolvedPlaceDisplay) resolvedPlaceDisplay.classList.add('hidden');
+          if (saveCompetitorBtn) saveCompetitorBtn.disabled = true;
+          window.showToast?.(searchFailureMessage(err), 'error');
         } finally {
           resolvePlaceBtn.disabled = false;
           resolvePlaceBtn.textContent = 'Resolve';

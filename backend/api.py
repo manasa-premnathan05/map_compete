@@ -323,6 +323,86 @@ def list_places():
         return jsonify({"error": str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Google Maps discovery diagnostics (safe / credential-free)
+# ---------------------------------------------------------------------------
+# Last observed scraper state per flow, surfaced by /api/places/diagnostics so a
+# production failure can be identified without server log access.
+_LAST_PLACE_DIAGNOSTICS = {}
+
+# Scraper state -> (HTTP status, error_type, default message). Anything that is
+# not RESULTS/NO_RESULTS means "we could not read Google Maps", which must never
+# be answered with an empty-but-successful result set.
+_STATE_HTTP = {
+    'CAPTCHA': (429, 'CAPTCHA',
+                'Google Maps presented an anti-automation challenge.'),
+    'BLOCKED': (503, 'BLOCKED',
+                'Google Maps blocked this automated request.'),
+    'CONSENT': (503, 'CONSENT',
+                'Google Maps is waiting for a consent decision.'),
+    'TIMEOUT': (504, 'TIMEOUT',
+                'Google Maps did not finish loading in time.'),
+    'BROWSER_ERROR': (503, 'BROWSER_ERROR',
+                      'Google Maps could not be loaded by the server.'),
+    'SELECTOR_FAILURE': (502, 'SELECTOR_FAILURE',
+                         'Google Maps loaded but the result structure could not be '
+                         'identified.'),
+    'ERROR': (502, 'ERROR',
+              'Google Maps could not be read by the server.'),
+    'PLACE_PROFILE': (422, 'PLACE_PROFILE',
+                      'Google Maps opened a single business profile instead of a '
+                      'result list.'),
+    'UNKNOWN': (502, 'UNKNOWN',
+                'Google Maps served an unrecognised page.'),
+}
+
+
+def _place_failure_response(state, message=None):
+    """HTTP status + error_type + message for a failed Google Maps read."""
+    status_code, error_type, default = _STATE_HTTP.get(state or 'UNKNOWN',
+                                                       _STATE_HTTP['UNKNOWN'])
+    return status_code, error_type, message or default
+
+
+def _safe_search_diagnostics(diagnostics):
+    """Trim scraper diagnostics to safe, non-sensitive fields."""
+    if not isinstance(diagnostics, dict):
+        return {}
+    allowed = ('query', 'location', 'current_url', 'title',
+               'result_containers_found', 'place_links_found', 'strategies_tried',
+               'scrolls', 'driver_started', 'duration_seconds', 'error_type', 'error')
+    return {key: diagnostics.get(key) for key in allowed if key in diagnostics}
+
+
+def _remember_place_diagnostics(flow, state, count, diagnostics=None):
+    """Remember the last Google Maps read per flow (used by the diagnostics route)."""
+    _LAST_PLACE_DIAGNOSTICS[flow] = {
+        'state': state,
+        'results': count,
+        'at': datetime.now().isoformat(timespec='seconds'),
+        'duration_seconds': (diagnostics or {}).get('duration_seconds'),
+        'title': (diagnostics or {}).get('title'),
+    }
+
+
+def _google_maps_reachable(timeout=6.0):
+    """Cheap reachability probe for Google Maps (no browser, no credentials)."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        'https://www.google.com/maps?hl=en',
+        headers={'User-Agent': 'Mozilla/5.0 (compatible; MapCompete diagnostics)'},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return (200 <= response.status < 400), 'HTTP %s' % response.status
+    except urllib.error.HTTPError as exc:
+        return False, 'HTTP %s' % exc.code
+    except Exception as exc:  # network / DNS / TLS problem
+        return False, type(exc).__name__
+
+
 @app.route('/api/places/resolve', methods=['POST'])
 def resolve_place():
     """Resolve a typed business name to its real Google Maps listing.
@@ -360,6 +440,8 @@ def resolve_place():
 
         scraper = GoogleMapsScraper(headless=True)
         live = scraper.resolve_place_identity(query, location=location)
+        live_state = (live.get('state') or 'UNKNOWN') if isinstance(live, dict) else 'UNKNOWN'
+        _remember_place_diagnostics('resolve', live_state, 1 if live.get('found') else 0)
         if live.get('found'):
             live_identity = db.resolve_place_identity(
                 name=live.get('name') or query,
@@ -378,11 +460,37 @@ def resolve_place():
                 "address": live.get('address'),
                 "google_maps_url": live.get('google_maps_url'),
             })
-        return jsonify({"found": False, "live": True, "identity": identity,
-                        "message": live.get('message')}), 404
+        if live_state == 'NO_RESULTS':
+            return jsonify({
+                "status": "no_results",
+                "state": live_state,
+                "error_type": "NO_RESULTS",
+                "found": False,
+                "live": True,
+                "identity": identity,
+                "message": live.get('message') or "Google Maps found no matching business.",
+            }), 404
+
+        # CAPTCHA / consent / block / timeout / selector failure: the lookup
+        # never happened, so this is an error, not a "business not found".
+        status_code, error_type, message = _place_failure_response(
+            live_state, live.get('message'))
+        logger.warning("Place resolve failed (%s) query=%r", error_type, query)
+        return jsonify({
+            "status": "error",
+            "state": live_state,
+            "error_type": error_type,
+            "error": message,
+            "found": False,
+            "live": True,
+            "identity": identity,
+        }), status_code
     except Exception as e:
         logger.error(f"Error resolving place: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"status": "error", "error_type": "SERVER_ERROR",
+                        "error": "The Google Maps lookup could not be completed on the "
+                                 "server.",
+                        "found": False, "live": True}), 500
 
 
 @app.route('/api/places/search', methods=['POST'])
@@ -405,21 +513,124 @@ def search_places():
             return jsonify({"error": "Location is required for nearby search"}), 400
 
         scraper = GoogleMapsScraper(headless=True)
-        results = scraper.search_google_maps_places(
+        outcome = scraper.search_google_maps_places(
             query=query,
             location=location,
             max_results=max_results
         )
-        
+        state = (outcome.get('state') or 'UNKNOWN') if isinstance(outcome, dict) else 'UNKNOWN'
+        results = (outcome.get('results') or []) if isinstance(outcome, dict) else list(outcome or [])
+        diagnostics = _safe_search_diagnostics(
+            (outcome or {}).get('diagnostics') if isinstance(outcome, dict) else {})
+        _remember_place_diagnostics('search', state, len(results), diagnostics)
+
+        if state == 'RESULTS' and results:
+            return jsonify({
+                "status": "success",
+                "state": state,
+                "query": query,
+                "location": location,
+                "results": results,
+                "count": len(results),
+                "diagnostics": diagnostics,
+            })
+
+        if state == 'NO_RESULTS':
+            # Google Maps loaded successfully and really has nothing to show.
+            return jsonify({
+                "status": "no_results",
+                "state": state,
+                "query": query,
+                "location": location,
+                "results": [],
+                "count": 0,
+                "message": "No matching businesses were found on Google Maps.",
+                "diagnostics": diagnostics,
+            })
+
+        # Everything else means "we could not read Google Maps": answer with a
+        # non-2xx status and the real reason instead of an empty result set.
+        status_code, error_type, message = _place_failure_response(
+            state, (outcome or {}).get('message') if isinstance(outcome, dict) else None)
+        logger.warning("Google Maps search failed (%s) query=%r location=%r",
+                       error_type, query, location)
         return jsonify({
+            "status": "error",
+            "error_type": error_type,
+            "error": message,
+            "state": state,
             "query": query,
             "location": location,
-            "results": results,
-            "count": len(results)
-        })
+            "results": [],
+            "count": 0,
+            "diagnostics": diagnostics,
+        }), status_code
+        
     except Exception as e:
         logger.error(f"Error searching places: {e}")
-        return jsonify({"error": str(e)}), 500
+        body = {"status": "error", "error_type": "SERVER_ERROR",
+                "error": "The search could not be completed on the server.",
+                "results": [], "count": 0}
+        if 'query' in locals():
+            body['query'] = query
+        if 'location' in locals():
+            body['location'] = location
+        return jsonify(body), 500
+
+
+@app.route('/api/places/diagnostics', methods=['GET'])
+def places_diagnostics():
+    """Safe diagnostics for the Google Maps scraping stack.
+
+    Reports availability and the last observed scraper state only - never
+    environment variables, credentials, paths or headers.
+    """
+    import shutil
+
+    chrome_path = os.environ.get('CHROME_BINARY') or os.environ.get('CHROME_PATH')
+    chromedriver_path = os.environ.get('CHROMEDRIVER_PATH')
+
+    selenium_available = True
+    try:
+        from selenium import webdriver as _webdriver  # noqa: F401
+    except Exception:
+        selenium_available = False
+
+    chrome_available = bool(
+        (chrome_path and os.path.exists(chrome_path))
+        or shutil.which('google-chrome')
+        or shutil.which('chromium')
+        or shutil.which('chromium-browser')
+        or shutil.which('chrome')
+        or os.path.exists('C:/Program Files/Google/Chrome/Application/chrome.exe')
+    )
+    chromedriver_available = bool(
+        (chromedriver_path and os.path.exists(chromedriver_path))
+        or shutil.which('chromedriver')
+    )
+
+    maps_reachable, maps_reason = _google_maps_reachable()
+    try:
+        database_connected = bool(db.health().get('ok'))
+    except Exception:
+        database_connected = False
+
+    last_search = _LAST_PLACE_DIAGNOSTICS.get('search')
+    return jsonify({
+        "selenium_available": selenium_available,
+        "chrome_available": chrome_available,
+        "chromedriver_available": chromedriver_available,
+        "chromedriver_note": (None if chromedriver_available else
+                              "Selenium resolves a matching driver automatically "
+                              "when CHROMEDRIVER_PATH is not set"),
+        "google_maps_reachable": maps_reachable,
+        "google_maps_reason": maps_reason,
+        "last_test_state": (last_search or {}).get('state'),
+        "last_search": last_search,
+        "last_resolve": _LAST_PLACE_DIAGNOSTICS.get('resolve'),
+        "last_discovery": _LAST_PLACE_DIAGNOSTICS.get('discover'),
+        "database_connected": database_connected,
+    })
 
 
 @app.route('/api/places/<int:place_id>', methods=['GET'])
@@ -819,8 +1030,18 @@ def discover_project_competitors(project_id):
                 scraper = GoogleMapsScraper(headless=True)
                 search_term = field or company_name
                 loc_term = location or ""
-                live_places = scraper.search_google_maps_places(search_term, loc_term, max_results=5)
-                logger.info(f"Live Google Maps scrape found {len(live_places)} places")
+                outcome = scraper.search_google_maps_places(
+                    search_term, loc_term, max_results=5)
+                live_places = (outcome.get('results') or []) if isinstance(outcome, dict) \
+                    else list(outcome or [])
+                logger.info("Live Google Maps scrape: state=%s places=%s",
+                            (outcome or {}).get('state') if isinstance(outcome, dict) else None,
+                            len(live_places))
+                _remember_place_diagnostics(
+                    'discover',
+                    (outcome or {}).get('state') if isinstance(outcome, dict) else None,
+                    len(live_places),
+                    (outcome or {}).get('diagnostics') if isinstance(outcome, dict) else None)
             except Exception as ex:
                 logger.warning(f"Live scrape skipped/failed: {ex}")
 

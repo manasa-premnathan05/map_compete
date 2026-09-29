@@ -93,235 +93,754 @@ class GoogleMapsScraper:
             self.driver = None
             logger.info("WebDriver closed")
 
-    def search_google_maps_places(self, query: str, location: str = None, max_results: int = 6) -> List[Dict]:
+    # ------------------------------------------------------------------
+    # Google Maps page-state detection (shared by search + resolve)
+    # ------------------------------------------------------------------
+    # "Google Maps returned nothing" and "we could not read Google Maps" are
+    # completely different answers. These markers let the scraper tell them
+    # apart, so an infrastructure/scraping failure is never reported as an
+    # empty (but valid) search result.
+    _CAPTCHA_MARKERS = (
+        'recaptcha',
+        'unusual traffic',
+        'not a robot',
+        'verify you are human',
+        "verify you're human",
+        'automated queries',
+        'automated query',
+        'our systems have detected',
+        'complete the security check',
+        'are you a robot',
+    )
+    _BLOCKED_MARKERS = (
+        'you have been blocked',
+        'your request has been blocked',
+        'request blocked',
+        'access denied',
+        '403 forbidden',
+        'error 403',
+        'this content is not available',
+        'not available in your region',
+    )
+    _CONSENT_MARKERS = (
+        'before you continue to google maps',
+        'i agree',
+        'accept all',
+        'your choices regarding cookies',
+    )
+    _ERROR_MARKERS = (
+        'something went wrong',
+        'we are sorry',
+        "we're sorry",
+        'server error',
+        'network error',
+        'no internet',
+        'err_',
+        "can't reach",
+        'cannot reach',
+        'service unavailable',
+        'google maps is unavailable',
+    )
+    _NO_RESULT_MARKERS = (
+        "can't find",
+        'cannot find',
+        'could not find',
+        "couldn't find",
+        'no results found',
+        "didn't match any",
+        'did not match any',
+        'no matching places',
+    )
+    _MAPS_READY_MARKERS = ('google maps', 'directions', 'satellite')
+    _LIMITED_VIEW_MARKERS = ('limited view of google maps',)
+    _BLOCKED_URL_MARKERS = ('/sorry/', 'google.com/sorry')
+    _CONSENT_URL_MARKERS = ('consent.google.com', '/consent')
+
+    # Address shape used to split Google's "category, address, hours" row text.
+    _ADDRESS_HINTS = (
+        'road', 'street', 'avenue', 'lane', 'drive', 'boulevard', 'highway',
+        'sector', 'block', 'phase', 'floor', 'building', 'tower', 'complex',
+        'mall', 'plaza', 'market', 'colony', 'nagar', 'vihar', 'puram', 'ganj',
+        'chowk', 'circle', 'square', 'cross', 'main', 'link', 'service',
+        'plot', 'shop no', 'unit', 'suite', 'level', 'basement',
+    )
+
+    # Result list selectors. Google rotates its class names, so every strategy
+    # is attempted and the first productive one wins.
+    RESULT_CARD_SELECTORS = (
+        "div[role='feed'] > div[jsaction]",
+        "div[role='feed'] > div",
+        "div.Nv2PK",
+        "div[jsaction*='mouseover:pane']",
+        "div[role='feed'] div[role='article']",
+    )
+    RESULT_LINK_SELECTORS = (
+        "a[href*='/maps/place/']",
+        "a[href*='google.com/maps/place']",
+    )
+    RESULT_SCROLL_SELECTORS = (
+        "div[role='feed']",
+        "div.m6QErb.DxyBCb",
+        "div.m6QErb[aria-label]",
+    )
+    NAME_SELECTORS = (
+        "div.qBF1Pd",
+        "div.fontHeadlineSmall span",
+        "div.fontHeadlineSmall",
+        "h3",
+    )
+    def _page_snapshot(self) -> Dict:
+        """URL + title + visible text of the current page.
+
+        Only public page text is captured - never cookies, local storage or
+        request headers.
         """
-        Scrape Google Maps search results to find real business places, addresses, ratings, and URLs.
+        snapshot = {'current_url': '', 'title': '', 'body_text': ''}
+        try:
+            snapshot['current_url'] = self.driver.current_url or ''
+        except Exception:
+            pass
+        try:
+            snapshot['title'] = self.driver.title or ''
+        except Exception:
+            pass
+        try:
+            body = self.driver.find_element(By.TAG_NAME, 'body')
+            snapshot['body_text'] = (body.text or '')[:4000]
+        except Exception:
+            pass
+        return snapshot
+
+    def _detect_google_maps_page_state(self, snapshot: Optional[Dict] = None,
+                                       result_cards: int = 0,
+                                       place_links: int = 0) -> Dict:
+        """Classify what Google Maps actually served.
+
+        ``result_cards``/``place_links`` are the extraction counts, so the same
+        helper reports RESULTS once rows were read, and SELECTOR_FAILURE when a
+        Maps page loaded but nothing could be identified.
+
+        Returns ``{"state", "current_url", "title", "message", "markers"}`` -
+        no cookies, credentials or headers.
+        """
+        if self.driver is None:
+            return {'state': 'BROWSER_ERROR', 'current_url': '', 'title': '',
+                    'message': 'The browser session is not available.',
+                    'markers': []}
+
+        snapshot = snapshot or self._page_snapshot()
+        url = snapshot.get('current_url') or ''
+        url_lower = url.lower()
+        title = snapshot.get('title') or ''
+        body = snapshot.get('body_text') or ''
+        haystack = (title + '\n' + body).lower()
+
+        def matched(markers):
+            return [marker for marker in markers if marker in haystack]
+
+        def response(state, message, markers=()):
+            return {'state': state, 'current_url': url, 'title': title,
+                    'message': message, 'markers': list(markers)}
+
+        if any(marker in url_lower for marker in self._BLOCKED_URL_MARKERS):
+            return response('BLOCKED', 'Google Maps blocked this request.')
+        captcha = matched(self._CAPTCHA_MARKERS)
+        if captcha:
+            return response('CAPTCHA',
+                            'Google Maps presented an anti-automation challenge.',
+                            captcha)
+        consent = matched(self._CONSENT_MARKERS)
+        if any(marker in url_lower for marker in self._CONSENT_URL_MARKERS) or consent:
+            return response('CONSENT',
+                            'Google Maps is waiting for a consent decision.',
+                            consent)
+        blocked = matched(self._BLOCKED_MARKERS)
+        if blocked:
+            return response('BLOCKED',
+                            'Google Maps refused to serve the results page.',
+                            blocked)
+        if not body.strip() and not title.strip():
+            return response('ERROR', 'Google Maps returned an empty page.')
+        if result_cards or place_links:
+            return response('RESULTS', None)
+        no_results = matched(self._NO_RESULT_MARKERS)
+        if no_results:
+            return response('NO_RESULTS',
+                            'Google Maps reported no matching places.',
+                            no_results)
+        if '/maps/place/' in url_lower:
+            return response('PLACE_PROFILE',
+                            'Google Maps opened a single business profile.')
+        errors = matched(self._ERROR_MARKERS)
+        if errors:
+            return response('ERROR', 'Google Maps reported an error page.', errors)
+        limited = matched(self._LIMITED_VIEW_MARKERS)
+        if matched(self._MAPS_READY_MARKERS):
+            message = ('Google Maps served a limited (unauthenticated) view without '
+                       'the result list.' if limited else
+                       'Google Maps loaded but the result structure could not be '
+                       'identified.')
+            return response('SELECTOR_FAILURE', message, limited)
+        return response('UNKNOWN', 'Google Maps served an unrecognised page.')
+    def _count_result_cards(self) -> int:
+        """How many result containers the current DOM exposes (best effort)."""
+        total = 0
+        for selector in self.RESULT_CARD_SELECTORS:
+            try:
+                total = max(total, len(self.driver.find_elements(By.CSS_SELECTOR, selector)))
+            except Exception:
+                continue
+        return total
+
+    def _scroll_results_pane(self, max_scrolls: int = 3, pause: float = 1.2) -> int:
+        """Scroll the results pane so dynamically loaded rows render.
+
+        Google Maps materialises rows while the pane scrolls; without this a
+        search can legitimately come back with only the first visible row.
+        """
+        pane = None
+        for selector in self.RESULT_SCROLL_SELECTORS:
+            try:
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+            if elements:
+                pane = elements[0]
+                break
+        if pane is None:
+            return 0
+
+        scrolls = 0
+        for _ in range(max_scrolls):
+            try:
+                before = self.driver.execute_script("return arguments[0].scrollTop;", pane)
+                self.driver.execute_script(
+                    "arguments[0].scrollTop = arguments[0].scrollHeight;", pane)
+                time.sleep(pause)
+                after = self.driver.execute_script("return arguments[0].scrollTop;", pane)
+            except Exception:
+                break
+            scrolls += 1
+            if before == after:
+                break
+        return scrolls
+
+    @staticmethod
+    def _is_glyph_only(text: str) -> bool:
+        """True for Material-icon glyphs Google renders as text (U+E000-U+F8FF)."""
+        stripped = (text or '').strip()
+        return bool(stripped) and all('\ue000' <= char <= '\uf8ff' for char in stripped)
+
+    @staticmethod
+    def _clean_text_fragment(value: str) -> Optional[str]:
+        """Trim a row fragment and drop Google's '·' separators around it."""
+        cleaned = (value or '').strip().strip('\u00b7\u22c5').strip().strip(',').strip()
+        return cleaned or None
+
+    @staticmethod
+    def _looks_like_address(text: str) -> bool:
+        """True when a row fragment looks like a street address."""
+        lowered = (text or '').lower()
+        if not lowered or len(lowered) > 160:
+            return False
+        # Require at least one real letter: "(1,428)" beside a rating is a review
+        # count, never an address.
+        if not re.search(r'[^\W\d_]', lowered):
+            return False
+        if any(hint in lowered for hint in GoogleMapsScraper._ADDRESS_HINTS):
+            return True
+        return bool(re.search(r'\d', lowered)) and ',' in lowered
+
+    @staticmethod
+    def _name_from_maps_url(url: str) -> Optional[str]:
+        """Business name derived from a /maps/place/<name>/ URL (never invented)."""
+        import urllib.parse
+
+        match = re.search(r'/maps/place/([^/@?]+)', url or '')
+        if not match:
+            return None
+        name = urllib.parse.unquote(match.group(1)).replace('+', ' ').strip()
+        name = name.split(' - ')[0].strip()
+        return name or None
+    def search_google_maps_places(self, query: str, location: str = None,
+                                  max_results: int = 6) -> Dict:
+        """Search Google Maps and report **both** the rows and the page state.
+
+        Returns a dict (never a bare list) so callers can distinguish a real
+        empty search from a scraping failure::
+
+            {"state": "RESULTS", "results": [...], "count": n,
+             "message": None, "diagnostics": {...}}
+
+        ``state`` is one of RESULTS, NO_RESULTS, CAPTCHA, CONSENT, BLOCKED,
+        TIMEOUT, BROWSER_ERROR, SELECTOR_FAILURE, ERROR or UNKNOWN.
         """
         import urllib.parse
-        import re
 
-        full_query = f"{query} {location}".strip() if location and location.lower() not in query.lower() else query
-        url = f"https://www.google.com/maps/search/{urllib.parse.quote(full_query)}"
-        logger.info(f"Searching Google Maps for: {full_query}")
+        started = time.time()
+        clean_query = (query or '').strip()
+        clean_location = (location or '').strip()
+        if clean_location and clean_location.lower() not in clean_query.lower():
+            full_query = f"{clean_query} {clean_location}".strip()
+        else:
+            full_query = clean_query
+        search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(full_query)}"
 
-        places = []
+        diagnostics = {
+            'query': clean_query,
+            'location': clean_location or None,
+            'search_url': search_url,
+            'current_url': None,
+            'redirected_to_profile': False,
+            'title': None,
+            'result_containers_found': 0,
+            'place_links_found': 0,
+            'strategies_tried': [],
+            'scrolls': 0,
+            'driver_started': False,
+            'duration_seconds': 0.0,
+            'error_type': None,
+            'error': None,
+        }
+        outcome = {'state': 'UNKNOWN', 'results': [], 'count': 0,
+                   'message': 'Google Maps search did not complete.',
+                   'diagnostics': diagnostics}
+
+        def finish(state, message, results=None):
+            outcome['state'] = state
+            outcome['message'] = message
+            outcome['results'] = list(results or [])
+            outcome['count'] = len(outcome['results'])
+            diagnostics['duration_seconds'] = round(time.time() - started, 2)
+            # Safe structured log: query / location / state / count / duration.
+            logger.info(
+                "Google Maps search: query=%s location=%s state=%s results=%s duration=%ss",
+                clean_query, clean_location or '-', state, outcome['count'],
+                diagnostics['duration_seconds'],
+            )
+            return outcome
+
         try:
             self.setup_driver()
-            self.driver.get(url)
-            time.sleep(4)
+            diagnostics['driver_started'] = self.driver is not None
+        except Exception as exc:
+            diagnostics['error_type'] = type(exc).__name__
+            diagnostics['error'] = str(exc)[:300]
+            return finish('BROWSER_ERROR',
+                          'The server could not start a browser to reach Google Maps.')
 
-            links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/maps/place/']")
-            seen_names = set()
+        try:
+            if self.driver is None:
+                return finish('BROWSER_ERROR',
+                              'The browser session could not be created.')
 
-            for link in links:
-                name = link.get_attribute("aria-label") or link.text.strip()
-                href = link.get_attribute("href")
-                if not name or name in seen_names or not href:
-                    continue
-                seen_names.add(name)
-
-                # Initialize with defaults
-                rating = None
-                review_count = None
-                category = None
-                address = None
-                opening_hours = None
-                status = None
-
-                try:
-                    card = link.find_element(By.XPATH, "./ancestor::div[contains(@class, 'Nv2PK')]")
-                    
-                    # Extract rating
-                    try:
-                        rating_elements = card.find_elements(By.CSS_SELECTOR, "[role='img'][aria-label*='star']")
-                        for el in rating_elements:
-                            aria = el.get_attribute("aria-label")
-                            if aria:
-                                m_rate = re.search(r'([345]\.[0-9])', aria)
-                                if m_rate:
-                                    rating = float(m_rate.group(1))
-                                    break
-                    except Exception:
-                        pass
-
-                    # Extract review count
-                    try:
-                        review_elements = card.find_elements(By.XPATH, ".//*[contains(text(), 'review') or contains(text(), 'Review')]")
-                        for el in review_elements:
-                            text = el.text.strip()
-                            m_rev = re.search(r'([\d,]+)\s*(review|Review)', text)
-                            if m_rev:
-                                review_count = int(m_rev.group(1).replace(',', ''))
-                                break
-                    except Exception:
-                        pass
-
-                    # Extract all text lines from card
-                    lines = [l.strip() for l in card.text.split('\n') if l.strip()]
-                    
-                    # Parse structured data from lines
-                    for i, line in enumerate(lines):
-                        line_lower = line.lower()
-                        
-                        # Opening hours / status
-                        if 'closes' in line_lower or 'opens' in line_lower or 'open 24' in line_lower:
-                            opening_hours = line
-                            if 'open' in line_lower:
-                                status = 'Open'
-                            elif 'closed' in line_lower:
-                                status = 'Closed'
-                            continue
-                        
-                        # Address indicators
-                        address_indicators = ['road', 'street', 'avenue', 'lane', 'drive', 'boulevard', 'highway',
-                                             'sector', 'block', 'phase', 'floor', 'building', 'tower', 'complex',
-                                             'mall', 'plaza', 'market', 'colony', 'nagar', 'vihar', 'puram', 'ganj',
-                                             'chowk', 'circle', 'square', 'cross', 'main', 'link', 'service',
-                                             'plot', 'shop no', 'shop no.', 'unit', 'suite', 'level', 'basement']
-                        
-                        has_address_indicator = any(ind in line_lower for ind in address_indicators)
-                        
-                        # Category keywords that appear at START of line
-                        category_start_keywords = ['restaurant', 'cafe', 'bakery', 'sweet', 'salon', 'spa', 'clinic', 'hospital', 
-                                                    'parlour', 'beauty', 'hair', 'nail', 'massage', 'wellness', 'medical',
-                                                    'dental', 'optical', 'veterinary', 'pet', 'automotive', 'car', 'bike',
-                                                    'repair', 'laundry', 'dry clean', 'tailor', 'photography',
-                                                    'studio', 'gallery', 'art', 'music', 'dance', 'yoga', 'martial arts',
-                                                    'gym', 'fitness', 'bank', 'atm', 'pharmacy', 'grocery', 'supermarket',
-                                                    'shop', 'store', 'boutique', 'hotel']
-                        
-                        starts_with_category = any(line_lower.startswith(kw) for kw in category_start_keywords)
-                        
-                        # COMBINED CASE: Line starts with category keyword AND has address indicators
-                        # Split into category (first part) and address (rest)
-                        if category is None and address is None and line != name and i > 0 and starts_with_category and has_address_indicator:
-                            # Find where the address part starts
-                            first_addr_pos = len(line)
-                            for ind in address_indicators:
-                                pos = line_lower.find(ind)
-                                if pos != -1 and pos < first_addr_pos:
-                                    first_addr_pos = pos
-                            
-                            if first_addr_pos < len(line) and first_addr_pos > 2:
-                                category = line[:first_addr_pos].strip().rstrip(',').strip()
-                                address = line[first_addr_pos:].strip().lstrip(',').strip()
-                            else:
-                                address = line
-                            continue
-                        
-                        # Address - lines with location indicators (CHECK FIRST)
-                        if address is None and has_address_indicator and len(line) > 5:
-                            address = line
-                            continue
-                        
-                        # Category - line STARTS with business category keyword
-                        category_start_keywords = ['restaurant', 'cafe', 'bakery', 'sweet', 'salon', 'spa', 'clinic', 'hospital', 
-                                                    'parlour', 'beauty', 'hair', 'nail', 'massage', 'wellness', 'medical',
-                                                    'dental', 'optical', 'veterinary', 'pet', 'automotive', 'car', 'bike',
-                                                    'repair', 'laundry', 'dry clean', 'tailor', 'photography',
-                                                    'studio', 'gallery', 'art', 'music', 'dance', 'yoga', 'martial arts',
-                                                    'gym', 'fitness', 'bank', 'atm', 'pharmacy', 'grocery', 'supermarket',
-                                                    'shop', 'store', 'boutique', 'hotel']
-                        
-                        starts_with_category = any(line_lower.startswith(kw) for kw in category_start_keywords)
-                        
-                        # If line starts with category keyword AND doesn't have strong address indicators, it's a category
-                        if category is None and line != name and i > 0 and starts_with_category and not has_address_indicator and len(line) < 120:
-                            category = line
-                            continue
-                        
-                        # Category - line contains business type but doesn't start with it
-                        # and doesn't look like an address
-                        is_address_like = any(ind in line_lower for ind in ['road', 'street', 'avenue', 'lane', 'drive', 'boulevard', 'highway',
-                                             'sector', 'block', 'phase', 'plot', 'shop no', 'shop no.', 'unit', 'suite',
-                                             'floor', 'building', 'tower', 'complex', 'mall', 'plaza', 'market',
-                                             'colony', 'nagar', 'vihar', 'puram', 'ganj', 'chowk', 'circle', 'square',
-                                             'cross', 'main', 'link', 'service', 'basement'])
-                        
-                        if category is None and line != name and i > 0 and not is_address_like:
-                            category_keywords = ['restaurant', 'cafe', 'bakery', 'sweet', 'salon', 'spa', 'clinic', 'hospital', 
-                                                'shop', 'store', 'boutique', 'hotel', 'gym', 'fitness', 'bank', 'atm',
-                                                'pharmacy', 'grocery', 'supermarket', 'mall', 'office', 'school',
-                                                'university', 'college', 'temple', 'mosque', 'church', 'park',
-                                                'museum', 'theater', 'cinema', 'library', 'post office', 'police',
-                                                'fire station', 'gas station', 'parking', 'taxi', 'bus', 'metro',
-                                                'train', 'airport', 'port', 'harbor', 'marina', 'beach', 'zoo',
-                                                'aquarium', 'garden', 'stadium', 'arena', 'convention', 'exhibition',
-                                                'parlour', 'beauty', 'hair', 'nail', 'massage', 'wellness', 'medical',
-                                                'dental', 'optical', 'veterinary', 'pet', 'automotive', 'car', 'bike',
-                                                'repair', 'service', 'laundry', 'dry clean', 'tailor', 'photography',
-                                                'studio', 'gallery', 'art', 'music', 'dance', 'yoga', 'martial arts']
-                            if any(kw in line_lower for kw in category_keywords) and len(line) < 80:
-                                category = line
-                                continue
-                        
-                        # Fallback: if line has '·' separator
-                        if '·' in line and category is None and address is None:
-                            parts = [p.strip() for p in line.split('·')]
-                            if len(parts) >= 2:
-                                # First part could be category, second could be address
-                                if len(parts[0]) < 80 and any(kw in parts[0].lower() for kw in ['restaurant', 'cafe', 'bakery', 'sweet', 'salon', 'shop', 'store', 'clinic', 'hospital', 'hotel', 'gym', 'bank', 'pharmacy', 'grocery', 'school', 'office', 'parlour', 'beauty', 'hair', 'spa', 'wellness']):
-                                    category = parts[0]
-                                address = parts[1]
-                            elif len(parts) == 1:
-                                if address is None:
-                                    address = parts[0]
-                            continue
-
-                    # If still no address, try to get from address button
-                    if address is None:
-                        try:
-                            addr_elements = card.find_elements(By.CSS_SELECTOR, "button[data-item-id='address'], [data-item-id='address']")
-                            for el in addr_elements:
-                                raw = el.get_attribute('aria-label') or el.text or ''
-                                raw = raw.replace('Address:', '').strip()
-                                if raw and len(raw) > 5:
-                                    address = raw
-                                    break
-                        except Exception:
-                            pass
-
-                    # If still no category, try to get from category button
-                    if category is None:
-                        try:
-                            cat_elements = card.find_elements(By.CSS_SELECTOR, "button[data-item-id='category'], [data-item-id='category']")
-                            for el in cat_elements:
-                                raw = el.get_attribute('aria-label') or el.text or ''
-                                raw = raw.strip()
-                                if raw and len(raw) < 80:
-                                    category = raw
-                                    break
-                        except Exception:
-                            pass
-
-                except Exception as e:
-                    logger.debug(f"Error parsing card for {name}: {e}")
-
-                places.append({
-                    "name": name,
-                    "google_maps_url": href,
-                    "category": category,
-                    "address": address,
-                    "opening_hours": opening_hours,
-                    "status": status,
-                    "rating": rating,
-                    "review_count": review_count,
-                    "distance": "0.8 km",
-                    "strengths": ["Verified Google Profile", "Popular in Area"],
-                    # Canonical identity: the same listing must resolve to one
-                    # business no matter which URL shape Google returned.
-                    **self._identity_fields(href, name, address),
-                })
-
-                if len(places) >= max_results:
+            try:
+                self.driver.get(search_url)
+            except TimeoutException as exc:
+                diagnostics['error_type'] = 'TimeoutException'
+                diagnostics['error'] = str(exc)[:300]
+                return finish('TIMEOUT', 'Google Maps did not finish loading in time.')
+            except WebDriverException as exc:
+                diagnostics['error_type'] = type(exc).__name__
+                diagnostics['error'] = str(exc)[:300]
+                return finish('BROWSER_ERROR',
+                              'Google Maps could not be loaded by the server.')
+            # Explicit waits: page content first, then the result list. Bounded
+            # so a Render Free request never hangs indefinitely.
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                snapshot = self._page_snapshot()
+                if (snapshot.get('body_text') or '').strip() or (snapshot.get('title') or '').strip():
                     break
+                time.sleep(0.4)
 
-        except Exception as e:
-            logger.error(f"Error scraping Google Maps places: {e}")
+            while time.time() < deadline:
+                if self._count_result_cards():
+                    break
+                if self._detect_google_maps_page_state()['state'] in (
+                        'NO_RESULTS', 'CAPTCHA', 'CONSENT', 'BLOCKED'):
+                    break
+                time.sleep(0.5)
+
+            results, counters = self._collect_results(max_results)
+            diagnostics.update(counters)
+
+            # One scroll pass only when the list is short, then re-collect.
+            if results and len(results) < max_results:
+                diagnostics['scrolls'] = self._scroll_results_pane(max_scrolls=3)
+                if diagnostics['scrolls']:
+                    more, after = self._collect_results(max_results)
+                    if more:
+                        results = more
+                    diagnostics['result_containers_found'] = max(
+                        diagnostics['result_containers_found'],
+                        after.get('result_containers_found', 0))
+                    diagnostics['place_links_found'] = max(
+                        diagnostics['place_links_found'],
+                        after.get('place_links_found', 0))
+                    diagnostics['strategies_tried'].extend(
+                        after.get('strategies_tried', []))
+
+            snapshot = self._page_snapshot()
+            diagnostics['current_url'] = snapshot.get('current_url')
+            diagnostics['title'] = (snapshot.get('title') or '')[:200]
+            # A redirect straight to one business profile outranks the feed rows
+            # (those can be just that profile's header or its reviews).
+            if '/maps/place/' in (diagnostics.get('current_url') or '').lower():
+                profile_result = self._profile_result_from_page()
+                if profile_result:
+                    diagnostics['redirected_to_profile'] = True
+                    return finish('RESULTS', None, [profile_result])
+
+            if results:
+                return finish('RESULTS', None, results[:max_results])
+
+            state_info = self._detect_google_maps_page_state(
+                snapshot,
+                result_cards=diagnostics.get('result_containers_found', 0),
+                place_links=diagnostics.get('place_links_found', 0),
+            )
+
+            # Google frequently answers a name+area search by redirecting straight
+            # to the single matching business profile. That business IS the
+            # result (handled above); if its profile cannot be read, say so
+            # instead of reporting "no businesses".
+            return finish(state_info['state'], state_info.get('message'))
+        except Exception as exc:
+            # Never let an unexpected error masquerade as "no results".
+            diagnostics['error_type'] = type(exc).__name__
+            diagnostics['error'] = str(exc)[:300]
+            logger.warning("Google Maps search failed: %s", exc)
+            return finish('ERROR',
+                          'The Google Maps search could not be completed on the server.')
         finally:
             self.close_driver()
+    def _element_text(self, element) -> str:
+        """Visible text of an element, with an innerText fallback.
 
-        return places
+        Some Google Maps containers report an empty ``.text`` to Selenium while
+        still rendering content, which would silently drop ratings, review
+        counts and addresses.
+        """
+        try:
+            text = element.text or ''
+        except Exception:
+            text = ''
+        if text.strip():
+            return text
+        try:
+            return (self.driver.execute_script(
+                "return arguments[0] ? arguments[0].innerText : '';", element) or '')
+        except Exception:
+            return text
+
+    def _profile_result_from_page(self) -> Optional[Dict]:
+        """The currently open Google Maps business profile as one search result.
+
+        Used when a search redirects to a single listing: the user asked for a
+        business by name and area, so that listing is the answer.
+        """
+        profile = self._read_current_place_profile() or {}
+        url = None
+        try:
+            url = self.driver.current_url or None
+        except Exception:
+            pass
+
+        name = self._clean_text_fragment(profile.get('name'))
+        if not name and url:
+            name = self._name_from_maps_url(url)
+        if not name:
+            return None
+
+        address = self._clean_text_fragment(profile.get('address'))
+        return {
+            'name': name,
+            'google_maps_url': url,
+            'category': self._clean_text_fragment(profile.get('category')),
+            'address': address,
+            'opening_hours': None,
+            'status': None,
+            'rating': profile.get('rating'),
+            'review_count': profile.get('review_count'),
+            'distance': None,
+            **self._identity_fields(url, name, address),
+        }
+
+    def _collect_results(self, max_results: int) -> Tuple[List[Dict], Dict]:
+        """Try every extraction strategy and return (results, counters)."""
+        counters = {'result_containers_found': 0, 'place_links_found': 0,
+                    'strategies_tried': []}
+        results: List[Dict] = []
+        seen_keys = set()
+
+        def add(candidate):
+            if not candidate or not candidate.get('name'):
+                return
+            key = (candidate.get('place_key')
+                   or candidate.get('google_maps_url')
+                   or '{}|{}'.format((candidate.get('name') or '').lower(),
+                                     (candidate.get('address') or '').lower()))
+            if key in seen_keys:
+                return
+            seen_keys.add(key)
+            results.append(candidate)
+
+        for selector in self.RESULT_CARD_SELECTORS:
+            if len(results) >= max_results:
+                break
+            counters['strategies_tried'].append('cards:' + selector)
+            try:
+                cards = self.driver.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+            counters['result_containers_found'] = max(
+                counters['result_containers_found'], len(cards))
+            for card in cards:
+                if len(results) >= max_results:
+                    break
+                try:
+                    add(self._parse_result_card(card))
+                except Exception as exc:
+                    logger.debug("Result card parse failed (%s): %s", selector, exc)
+
+        if len(results) < max_results:
+            for selector in self.RESULT_LINK_SELECTORS:
+                if len(results) >= max_results:
+                    break
+                counters['strategies_tried'].append('links:' + selector)
+                try:
+                    links = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                except Exception:
+                    continue
+                counters['place_links_found'] = max(
+                    counters['place_links_found'], len(links))
+                for link in links:
+                    if len(results) >= max_results:
+                        break
+                    try:
+                        href = link.get_attribute('href')
+                        card = link
+                        if href:
+                            try:
+                                card = link.find_element(
+                                    By.XPATH,
+                                    "./ancestor::div[contains(@class,'Nv2PK')][1]")
+                            except Exception:
+                                card = link
+                        add(self._parse_result_card(card, href_hint=href))
+                    except Exception as exc:
+                        logger.debug("Result link parse failed (%s): %s", selector, exc)
+
+        return results, counters
+    def _parse_result_card(self, card, href_hint: str = None) -> Optional[Dict]:
+        """Read one search row (result card or bare place link).
+
+        Missing values stay ``None`` - nothing is invented. Extraction prefers
+        Google's structured row markup and falls back to text heuristics when
+        that markup is absent.
+        """
+        name = None
+        href = href_hint or None
+        rating = None
+        review_count = None
+        category = None
+        address = None
+        opening_hours = None
+        status = None
+
+        # 1. The place link carries the canonical URL (and often the name).
+        if not href:
+            for selector in self.RESULT_LINK_SELECTORS:
+                try:
+                    link = card.find_element(By.CSS_SELECTOR, selector)
+                except Exception:
+                    continue
+                href = link.get_attribute('href') or None
+                label = (link.get_attribute('aria-label') or '').strip()
+                if label:
+                    name = label
+                if href:
+                    break
+        if not href:
+            try:
+                href = card.get_attribute('href') or None
+            except Exception:
+                pass
+
+        # 2. Business name: dedicated name element, then link label, then the
+        #    first rendered line, then the URL slug.
+        if not name:
+            for selector in self.NAME_SELECTORS:
+                try:
+                    element = card.find_element(By.CSS_SELECTOR, selector)
+                except Exception:
+                    continue
+                text = (element.text or '').strip()
+                if text:
+                    name = text
+                    break
+
+        card_text = self._element_text(card)
+        try:
+            lines = [line.strip() for line in card_text.split('\n') if line.strip()]
+        except Exception:
+            lines = []
+        if not name and lines:
+            name = lines[0]
+        if not name and href:
+            name = self._name_from_maps_url(href)
+        name = self._clean_text_fragment(name)
+        # The feed also renders chrome rows (a "Results" header, separator rows,
+        # Material icon glyphs) - those are not businesses.
+        if (not name or self._is_glyph_only(name)
+                or name.lower() in ('results', 'sponsored', 'ads', 'more results',
+                                    'see all', 'filters and topics')
+                or re.fullmatch(r'[\d.,]+ reviews?', name, re.IGNORECASE)):
+            return None
+
+        # 3. Rating + review count (Google often exposes both in one label).
+        for selector in ("span[role='img'][aria-label*='star']",
+                         "span[aria-label*='star']", "span.MW4etd"):
+            try:
+                element = card.find_element(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+            raw = (element.get_attribute('aria-label') or element.text or '').strip()
+            match = re.search(r'([0-5]\.\d)\s*star', raw) or re.search(r'^([0-5]\.\d)$', raw)
+            if match:
+                rating = float(match.group(1))
+            review_match = re.search(r'([\d.,]+)\s*review', raw, re.IGNORECASE)
+            if review_match:
+                digits = re.sub(r'[^\d]', '', review_match.group(1))
+                if digits:
+                    review_count = int(digits)
+            if rating is not None:
+                break
+        if review_count is None:
+            for selector in ("span.UY7F9", "span[aria-label*='review']"):
+                try:
+                    element = card.find_element(By.CSS_SELECTOR, selector)
+                except Exception:
+                    continue
+                raw = (element.get_attribute('aria-label') or element.text or '')
+                digits = re.sub(r'[^\d]', '', raw.replace('\u00a0', ' '))
+                if digits:
+                    review_count = int(digits)
+                    break
+        if review_count is None:
+            # Row form "4.2 (4,000)": a parenthesised count beside the rating.
+            match = (re.search(r'([\d,]+)\s*review', card_text, re.IGNORECASE)
+                     or re.search(r'\(([\d.,]+)\)', card_text))
+            if match:
+                digits = re.sub(r'[^\d]', '', match.group(1))
+                if digits:
+                    review_count = int(digits)
+
+        # 4. Google's structured row: "category · address · opening hours".
+        try:
+            for span in card.find_elements(By.CSS_SELECTOR, "div.W4Efsd span"):
+                text = self._clean_text_fragment(span.text)
+                if not text or self._is_glyph_only(text):
+                    continue
+                if re.fullmatch(r'[0-5](?:\.\d)?', text) or not re.search(r'[^\W\d_]', text):
+                    # Google repeats the rating (and its review count) inside the
+                    # row - neither is a category.
+                    continue
+                lowered = text.lower()
+                if opening_hours is None and any(
+                        token in lowered for token in ('closes', 'opens', 'open 24', 'closed')):
+                    opening_hours = text
+                    status = ('Closed' if 'closed' in lowered
+                              else 'Open' if 'open' in lowered else None)
+                    continue
+                if category is None and not self._looks_like_address(text) and len(text) < 80:
+                    category = text
+                    continue
+                if address is None and self._looks_like_address(text):
+                    address = text
+        except Exception:
+            pass
+        # 5. Fallback: text heuristics over the rendered row (address first).
+        if address is None or category is None:
+            for index, line in enumerate(lines):
+                line_lower = line.lower()
+                if line == name:
+                    continue
+                if opening_hours is None and any(
+                        token in line_lower for token in ('closes', 'opens', 'open 24', 'closed')):
+                    opening_hours = line
+                    status = ('Closed' if 'closed' in line_lower
+                              else 'Open' if 'open' in line_lower else None)
+                    continue
+                if '\u00b7' in line and (address is None or category is None):
+                    for part in [p.strip() for p in line.split('\u00b7') if p.strip()]:
+                        if (category is None and not self._looks_like_address(part)
+                                and len(part) < 80):
+                            category = part
+                        elif address is None and self._looks_like_address(part):
+                            address = part
+                    continue
+                if address is None and self._looks_like_address(line) and len(line) > 5:
+                    address = self._clean_text_fragment(line)
+                    continue
+                if (category is None and index > 0 and len(line) < 80
+                        and not self._looks_like_address(line)
+                        and re.search(r'[^\W\d_]', line)):
+                    category = line
+                    continue
+
+        # 6. Last resort: Google's dedicated address / category elements.
+        if address is None:
+            try:
+                for element in card.find_elements(
+                        By.CSS_SELECTOR,
+                        "button[data-item-id='address'], [data-item-id='address']"):
+                    raw = (element.get_attribute('aria-label') or element.text or '')
+                    raw = raw.replace('Address:', '').strip()
+                    if raw and len(raw) > 5:
+                        address = raw
+                        break
+            except Exception:
+                pass
+        if category is None:
+            try:
+                for element in card.find_elements(
+                        By.CSS_SELECTOR,
+                        "button[data-item-id='category'], [data-item-id='category']"):
+                    raw = (element.get_attribute('aria-label') or element.text or '').strip()
+                    if raw and len(raw) < 80:
+                        category = raw
+                        break
+            except Exception:
+                pass
+
+        if category and category.strip().lower() in ('local guide', 'local guide.'):
+            # Review authors carry this label - it is not a business category.
+            category = None
+        if category and not re.search(r'[^\W\d_]', category):
+            # Rating / review-count echoes are never categories.
+            category = None
+
+        if not href and not address:
+            # No canonical URL and no location: page chrome (such as a review row
+            # on a business profile), not a business result.
+            return None
+
+        return {
+            'name': name,
+            'google_maps_url': href,
+            'category': category,
+            'address': address,
+            'opening_hours': opening_hours,
+            'status': status,
+            'rating': rating,
+            'review_count': review_count,
+            # No part of this flow measures distance, so it stays None rather
+            # than reporting a made-up number.
+            'distance': None,
+            **self._identity_fields(href, name, address),
+        }
 
     @staticmethod
     def _identity_fields(gmap_url: str, name: str = None, address: str = None) -> Dict:
@@ -349,7 +868,9 @@ class GoogleMapsScraper:
         import re
 
         clean_query = (query or '').strip()
+        page_state = None
         result = {
+            "state": None,
             "found": False,
             "query": clean_query,
             "location": location,
@@ -372,9 +893,44 @@ class GoogleMapsScraper:
         search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(full_query)}"
 
         try:
-            self.setup_driver()
-            self.driver.get(search_url)
-            time.sleep(4)
+            try:
+                self.setup_driver()
+            except Exception as exc:
+                result["state"] = "BROWSER_ERROR"
+                result["message"] = ("The server could not start a browser to reach "
+                                     "Google Maps.")
+                logger.warning("Place resolution driver failure: %s", exc)
+                return result
+
+            try:
+                self.driver.get(search_url)
+            except TimeoutException:
+                result["state"] = "TIMEOUT"
+                result["message"] = "Google Maps did not finish loading in time."
+                return result
+            except WebDriverException as exc:
+                result["state"] = "BROWSER_ERROR"
+                result["message"] = "Google Maps could not be loaded by the server."
+                logger.warning("Place resolution browser failure: %s", exc)
+                return result
+
+            # Bounded readiness wait instead of a blind sleep.
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                snapshot = self._page_snapshot()
+                if ((snapshot.get("body_text") or "").strip()
+                        or (snapshot.get("title") or "").strip()):
+                    break
+                time.sleep(0.4)
+
+            # A challenge / consent / block is a scraper problem, never a
+            # "this business does not exist" answer.
+            page_state = self._detect_google_maps_page_state()
+            if page_state["state"] in ("CAPTCHA", "CONSENT", "BLOCKED", "ERROR",
+                                       "BROWSER_ERROR"):
+                result["state"] = page_state["state"]
+                result["message"] = page_state["message"]
+                return result
 
             # Ask Google itself whether the search matched anything.
             try:
@@ -487,6 +1043,7 @@ class GoogleMapsScraper:
                     result.update(self._identity_fields(href, name, address))
                     result.update({
                         "found": True,
+                        "state": "PLACE_PROFILE",
                         "name": name or clean_query,
                         "address": address,
                         "category": category,
@@ -498,14 +1055,23 @@ class GoogleMapsScraper:
                     })
                     return result
 
-            result["message"] = (
-                "No Google Maps listing matched this name"
-                if not no_results else "Google Maps found no place for this name"
-            )
+            if no_results:
+                result["state"] = "NO_RESULTS"
+                result["message"] = "Google Maps found no place for this name"
+            else:
+                # A Maps page that could not be read is NOT an empty result.
+                state = (page_state or {}).get("state")
+                if state in (None, "UNKNOWN", "RESULTS"):
+                    state = "SELECTOR_FAILURE"
+                result["state"] = state
+                result["message"] = ((page_state or {}).get("message")
+                                     or "Google Maps loaded but no business profile "
+                                        "could be identified.")
             return result
         except Exception as e:
             logger.warning(f"Place resolution failed for {clean_query!r}: {e}")
-            result["message"] = str(e)
+            result["state"] = result.get("state") or "ERROR"
+            result["message"] = "The Google Maps lookup could not be completed on the server."
             return result
         finally:
             self.close_driver()

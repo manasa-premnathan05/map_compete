@@ -335,24 +335,19 @@ export function initAPI() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, location, max_results: maxResults })
       });
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to search places');
+        // Keep the backend's real reason (CAPTCHA / BLOCKED / SELECTOR_FAILURE /
+        // TIMEOUT / BROWSER_ERROR) instead of a generic message.
+        const error = new Error(payload.error || payload.message
+          || 'The Google Maps search failed on the server.');
+        error.status = response.status;
+        error.errorType = payload.error_type || 'UNKNOWN';
+        error.state = payload.state || null;
+        error.diagnostics = payload.diagnostics || null;
+        throw error;
       }
-      return response.json();
-    },
-
-    resolvePlace: async (name, location, options = {}) => {
-      const response = await fetch(`${BASE_URL}/places/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, location, ...options })
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to resolve place');
-      }
-      return response.json();
+      return payload;
     },
 
     getPlaceDetail: async (placeId) => {
@@ -386,11 +381,16 @@ export function initAPI() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to verify competitor');
+        const error = new Error(payload.error || payload.message
+          || 'The competitor verification failed on the server.');
+        error.status = response.status;
+        error.errorType = payload.error_type || 'UNKNOWN';
+        error.payload = payload;
+        throw error;
       }
-      return response.json();
+      return payload;
     },
 
     // Place identity methods
@@ -417,11 +417,18 @@ export function initAPI() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, location, ...options })
       });
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to resolve place');
+        // Preserve the backend's real reason (CAPTCHA / BLOCKED / NO_RESULTS...)
+        const error = new Error(payload.error || payload.message
+          || 'The Google Maps lookup failed on the server.');
+        error.status = response.status;
+        error.errorType = payload.error_type || 'UNKNOWN';
+        error.state = payload.state || null;
+        error.payload = payload;
+        throw error;
       }
-      return response.json();
+      return payload;
     },
 
     getPlaceDetail: async (placeId) => {
@@ -433,6 +440,13 @@ export function initAPI() {
     getProjectPlaces: async (projectId) => {
       const response = await fetch(`${BASE_URL}/projects/${projectId}/places`);
       if (!response.ok) throw new Error('Failed to get project places');
+      return response.json();
+    },
+
+    // Google Maps scraping diagnostics (Selenium / Chrome / reachability)
+    getPlacesDiagnostics: async () => {
+      const response = await fetch(`${BASE_URL}/places/diagnostics`);
+      if (!response.ok) throw new Error('Failed to read scraping diagnostics');
       return response.json();
     },
 
