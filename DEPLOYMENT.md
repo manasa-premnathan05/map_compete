@@ -199,8 +199,9 @@ forwards to Render through `frontend/vercel.json`.
    * **Root Directory**: `frontend`  (so `vercel.json` is picked up)
    * **Framework Preset**: Other (no build command, output = static files)
    * No environment variables are needed — the frontend resolves the API URL
-     at runtime (`window.__API_BASE__` override → localhost in dev →
-     relative `/api` in production).
+     at runtime (`window.__API_BASE__` override → `/api` on Vercel, which the
+     rewrite below forwards to Render → automatic probe of the local ports when
+     the page is served from localhost).
 
 3. Deploy → you get `https://your-app.vercel.app`.
 
@@ -214,12 +215,14 @@ Local override (only if you ever need it): set `window.__API_BASE__` before
 Once the Vercel domain exists, set it on Render:
 
 ```
-CORS_ORIGINS=https://your-app.vercel.app
+CORS_ORIGINS=https://your-app.vercel.app,http://localhost:3000,http://127.0.0.1:3000
 ```
 
-(comma separated if you also keep a local origin:
-`https://your-app.vercel.app,http://localhost:3000`), then restart the
-service. Until then `CORS_ORIGINS=*` keeps development working.
+(comma separated; keeping the local origins means a page served from
+`localhost` can also call this API directly), then restart the service. Until
+then `CORS_ORIGINS=*` keeps development working. The Vercel deployment itself
+needs no CORS at all: it calls the API through the `vercel.json` rewrite, so the
+browser sees a same-origin request.
 
 ---
 
@@ -252,14 +255,47 @@ Run these from the Vercel URL (and directly against the Render URL once):
 cp .env.example .env           # fill MONGODB_URI + GROQ_API_KEY
 pip install -r backend/requirements.txt
 python backend/api.py          # API on http://localhost:10000 (PORT env)
+```
 
-# frontend, any static server:
-cd frontend && python -m http.server 3000
+**Frontend — recommended, zero config (no CORS, works even without Atlas):**
+
+```bash
+python serve_local.py          # serves frontend/ on http://localhost:3000 and
+                               # proxies /api/* to the first reachable backend
 # open http://localhost:3000
 ```
 
-* Local development talks to the **same Atlas cluster** (or your own local
-  `mongod`) — no SQLite file is used or needed.
+`serve_local.py` picks the backend automatically (local `:10000` → local
+`:5000` → deployed Render API), injects `window.__API_BASE__ = '/api'` into the
+page and forwards every `/api/*` request through the Python process. Because the
+browser only ever talks to `localhost:3000`:
+
+* no CORS configuration is needed (Render only allows the Vercel origin), and
+* the UI shows real data even when the local backend cannot reach Atlas.
+
+Alternative — plain static server (the browser auto-detects the API instead):
+
+```bash
+python -m http.server 3000 --directory frontend   # open http://localhost:3000
+```
+
+The page then probes `http://localhost:10000/api`, `http://127.0.0.1:10000/api`,
+`http://localhost:5000/api`, `http://127.0.0.1:5000/api` and finally the
+deployed Render API, and uses the first one whose `/api/health` proves it is the
+MapCompete MongoDB backend (reports a `database` field). A legacy SQLite build on
+one of those ports is skipped, never used. The chosen URL is printed in the
+browser console as `[MapCompete] API: ...`.
+
+Local development talks to the **same Atlas cluster** (or your own local
+`mongod`) — no SQLite file is used or needed.
+
+> **Atlas network access:** the machine running `python backend/api.py` must be
+> allowed in MongoDB Atlas → **Network Access**. Without it the local API answers
+> `/api/health` with `503 degraded` and every data request fails with
+> `TLSV1_ALERT_INTERNAL_ERROR` / `SSL handshake failed`. Add your public IP
+> (`https://api.ipify.org` shows it) or `0.0.0.0/0`. `serve_local.py` keeps the
+> UI usable in that state by proxying to the deployed Render API.
+
 * Optional Docker stack: `docker compose up --build` (API proxied on
   `localhost:5000`, frontend on `:3000`).
 * Windows note: `gunicorn` is Linux-only; local dev uses `python
@@ -282,6 +318,13 @@ python backend/test_mongodb.py
 
 # Full UI verification (needs running backend + Atlas)
 python verify_frontend_ui.py
+
+# Frontend API-base resolution (Vercel vs localhost, mocked backends)
+node verify_api_base.mjs
+
+# Is the frontend really connected to the backend? (Render + Vercel + localhost)
+python verify_deployment.py                 # deployed stack
+python verify_deployment.py --local         # + http://localhost:3000
 ```
 
 Expected: the first three print `ALL ... TESTS PASSED`. `test_mongodb.py`
@@ -296,6 +339,10 @@ its designed behaviour, not a code failure.
 |---------|-----|
 | `/api/health` → 503 `"MONGODB_URI is not configured"` | Set `MONGODB_URI` in Render → Environment → Restart |
 | `/api/health` → 503 `"MongoDB is unreachable: ..."` | Wrong password, or Atlas **Network Access** doesn't allow the IP (`0.0.0.0/0` is simplest) |
+| Local `/api/health` → 503 `SSL handshake failed: TLSV1_ALERT_INTERNAL_ERROR` | Atlas rejects the TLS handshake because this machine's public IP is not in **Network Access** — add it (`https://api.ipify.org` shows it) and wait ~1 min |
+| UI stuck on `Loading projects...` / "API unreachable" | The browser could not reach the API. DevTools → Console shows `[MapCompete] API: <url>`; a local URL means that backend is down or its MongoDB is unreachable. Start `python backend/api.py` and/or run `python serve_local.py` (proxies `/api/*` to a working backend) |
+| Localhost shows no data while Vercel works fine | Render's `CORS_ORIGINS` does not include the local origin, so a direct cross-origin call is blocked. Either add `http://localhost:3000,http://127.0.0.1:3000` to `CORS_ORIGINS` on Render, or use `python serve_local.py` (proxied = same origin, no CORS) |
+| Local and deployed show different projects | Both read the same Atlas cluster but different documents; the git-ignored `competitor_intelligence.db` is never read at runtime. Compare `GET /api/projects` for both backends |
 | Vercel site loads but API calls fail (502/504) | `frontend/vercel.json` still has `YOUR-BACKEND.onrender.com` placeholder, or the Render service is asleep (first hit is slow — retry after ~30 s) |
 | CORS error in browser console | Set `CORS_ORIGINS=https://your-app.vercel.app` on Render and restart |
 | Render build fails on `pip install` | Check `backend/requirements.txt` wasn't modified; Render needs internet on first build |

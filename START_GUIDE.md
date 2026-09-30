@@ -18,13 +18,18 @@ pip install -r requirements.txt
 cd backend
 python api.py
 ```
-The API will be available at http://localhost:5000
+The API will be available at http://localhost:10000 (the `PORT` in `.env`;
+set `PORT=5000` to keep the old port)
 
 ### Step 3: Open the Frontend
-Simply open `frontend/index.html` in your browser, or serve it with any static file server:
+Recommended (serves `frontend/` and proxies `/api/*` to a working backend):
 ```bash
 # From the root directory
-python -m http.server 3000
+python serve_local.py
+```
+Or use any static server; the page then auto-detects the local API:
+```bash
+python -m http.server 3000 --directory frontend
 ```
 Then visit http://localhost:3000
 

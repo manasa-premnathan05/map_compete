@@ -134,6 +134,14 @@ export function initDashboard(api) {
       return projects;
     } catch (err) {
       console.warn('Could not load projects for selector:', err);
+      // Never leave "Loading projects..." on screen forever: that hides the real
+      // reason (backend asleep, database unreachable) and looks like a frozen
+      // app. Say what happened and surface it as a toast as well.
+      const failureOption = '<option value="">API unreachable - check the backend</option>';
+      if (projectSelectEl) projectSelectEl.innerHTML = failureOption;
+      const mobileSelectEl = document.getElementById('mobile-project-select');
+      if (mobileSelectEl) mobileSelectEl.innerHTML = failureOption;
+      window.showToast?.(`Could not load projects: ${err.message}`, 'error');
       return [];
     }
   }
@@ -207,6 +215,21 @@ export function initDashboard(api) {
         api.getMarketGaps(projectId),
         api.getScrapingStats(projectId)
       ]);
+
+      // Every request above is independent (`allSettled`), so a single failing
+      // endpoint never blanks the dashboard. When *everything* fails the API is
+      // unreachable and the cards would silently keep their placeholder dashes -
+      // say so instead.
+      const settled = [
+        projectRes, competitorsRes, postsRes, scrapingLogsRes, topicsRes,
+        keywordsRes, ideasRes, projectPlacesRes, marketGapsRes, scrapingStatsRes
+      ];
+      const rejected = settled.filter(result => result.status === 'rejected');
+      if (rejected.length === settled.length) {
+        const reason = rejected[0]?.reason?.message || 'the API is unreachable';
+        console.error('Dashboard data could not be loaded:', reason);
+        window.showToast?.(`Could not load dashboard data: ${reason}`, 'error');
+      }
 
       const project = projectRes.status === 'fulfilled' ? projectRes.value?.project : null;
       const competitors = competitorsRes.status === 'fulfilled' ? (competitorsRes.value?.competitors || []) : [];

@@ -107,9 +107,13 @@ cp .env.example .env
 # Backend (API on http://localhost:10000 by default, PORT is configurable)
 python backend/api.py
 
-# Frontend (any static server; for example)
-cd frontend && python -m http.server 3000
-# -> open http://localhost:3000 (the frontend calls http://localhost:10000/api)
+# Frontend — recommended: serves frontend/ and proxies /api/* to a working
+# backend (no CORS, no port guessing, works even if Atlas blocks this machine)
+python serve_local.py
+# -> open http://localhost:3000
+
+# or any static server; the page then auto-detects the local API itself
+python -m http.server 3000 --directory frontend
 ```
 
 Optional full stack with Docker (backend + nginx frontend):
@@ -122,6 +126,11 @@ docker compose up --build   # API http://localhost:5000 (proxied), frontend :300
 - Frontend: http://localhost:3000
 - API: http://localhost:10000 (or :5000 through the Docker proxy)
 - Health check: http://localhost:10000/api/health
+
+The frontend resolves the API automatically — `/api` (Vercel rewrite → Render)
+in production, and the first healthy local backend on localhost. The browser
+console prints the chosen URL as `[MapCompete] API: <url>`. Verify the whole
+wiring with `python verify_deployment.py --local`.
 
 ## API Endpoints
 

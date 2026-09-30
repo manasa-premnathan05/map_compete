@@ -4,24 +4,118 @@
 // environment without code changes:
 //   1. window.__API_BASE__  - explicit override (set it in index.html before
 //      app.js loads, if you ever need to point somewhere else).
-//   2. http://localhost:10000/api when the page itself is served from
-//      localhost - local development (matches .env.example PORT=10000).
+//   2. On localhost the backend is auto-detected from LOCAL_API_CANDIDATES, so
+//      the app works no matter which port the API was started on. A candidate
+//      is accepted only when /api/health proves it is the MapCompete MongoDB
+//      backend (it reports a `database` field) - a legacy SQLite build or an
+//      unrelated server on the same port is skipped instead of feeding the UI
+//      the wrong data.
 //   3. "/api" - relative path for production: Vercel forwards /api/* to the
 //      backend using the rewrite in frontend/vercel.json, and the Docker
 //      frontend (nginx) proxies /api/* to the backend container.
-function resolveApiBaseURL() {
+const DEPLOYED_API_BASE = 'https://map-compete.onrender.com/api';
+
+// Local development candidates, highest priority first. Port 10000 is the port
+// configured in .env / .env.example (`python backend/api.py`); 5000 is the
+// docker-compose / legacy port. Both localhost and 127.0.0.1 are probed because
+// some Windows setups resolve only one of them. The deployed Render API comes
+// last: local development keeps working (with real data) even when the local
+// MongoDB connection is down, e.g. the machine's IP is not in the Atlas
+// "Network Access" allowlist.
+const LOCAL_API_CANDIDATES = [
+  { base: 'http://localhost:10000/api', timeoutMs: 4000 },
+  { base: 'http://127.0.0.1:10000/api', timeoutMs: 4000 },
+  { base: 'http://localhost:5000/api', timeoutMs: 4000 },
+  { base: 'http://127.0.0.1:5000/api', timeoutMs: 4000 },
+  { base: DEPLOYED_API_BASE, timeoutMs: 15000 }
+];
+
+function isLocalHostname(host) {
+  return !host
+    || host === 'localhost'
+    || host === '127.0.0.1'
+    || host === '::1'
+    || host.endsWith('.localhost');
+}
+
+// Ask one candidate who it is. Returns what /api/health revealed instead of
+// throwing, so callers can rank all candidates in one pass.
+async function probeCandidate({ base, timeoutMs }) {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(`${base}/health`, {
+      signal: controller ? controller.signal : undefined,
+      cache: 'no-store'
+    });
+    const payload = await response.json().catch(() => null);
+    return {
+      base,
+      reachable: true,
+      // The MongoDB-era backend always reports `database`; anything else
+      // answering on these ports is not the API this UI must talk to.
+      isMapCompete: !!(payload && typeof payload.database === 'string'),
+      healthy: response.ok && !!payload && payload.status === 'healthy',
+      status: response.status
+    };
+  } catch (error) {
+    return { base, reachable: false, isMapCompete: false, healthy: false, error };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function pickLocalApiBase() {
+  const results = await Promise.all(LOCAL_API_CANDIDATES.map(probeCandidate));
+
+  // 1. First fully healthy MapCompete backend, in priority order (a local
+  //    backend therefore always beats the deployed fallback).
+  const healthy = results.find((r) => r.reachable && r.isMapCompete && r.healthy);
+  if (healthy) {
+    console.info(`[MapCompete] API: ${healthy.base} (database connected)`);
+    return healthy.base;
+  }
+
+  // 2. The right backend is running but its database is unreachable. Point at
+  //    it anyway so the UI shows the real 503 reason instead of pretending.
+  const degraded = results.find((r) => r.reachable && r.isMapCompete);
+  if (degraded) {
+    console.error(
+      `[MapCompete] API: ${degraded.base} answers but its MongoDB is unreachable. ` +
+      'Add this machine\'s public IP to MongoDB Atlas -> Network Access ' +
+      '(or set window.__API_BASE__ to a working API).'
+    );
+    return degraded.base;
+  }
+
+  // 3. Nothing that looks like the API answered: fail loudly on the documented
+  //    local port instead of guessing.
+  const unreachable = results.filter((r) => r.reachable && !r.isMapCompete).map((r) => r.base);
+  if (unreachable.length) {
+    console.warn(`[MapCompete] Ignored non-MapCompete servers on: ${unreachable.join(', ')}`);
+  }
+  console.error(
+    `[MapCompete] No MapCompete backend answered. Start one with ` +
+    `"python backend/api.py" (expected ${LOCAL_API_CANDIDATES[0].base}).`
+  );
+  return LOCAL_API_CANDIDATES[0].base;
+}
+
+async function resolveApiBaseURL() {
   if (typeof window !== 'undefined' && window.__API_BASE__) {
     return window.__API_BASE__;
   }
   const host = (typeof window !== 'undefined' && window.location && window.location.hostname) || '';
-  if (!host || host === 'localhost' || host === '127.0.0.1') {
-    return 'http://localhost:10000/api';
+  if (!isLocalHostname(host)) {
+    // Production: relative path so the Vercel rewrite / nginx proxy forwards
+    // /api/* to the backend (no CORS, no hard-coded host).
+    return '/api';
   }
-  return '/api';
+  return pickLocalApiBase();
 }
 
-export function initAPI() {
-  const BASE_URL = resolveApiBaseURL(); // Backend API URL
+export async function initAPI() {
+  const BASE_URL = await resolveApiBaseURL(); // Backend API URL
 
   return {
     // Project methods

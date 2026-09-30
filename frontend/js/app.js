@@ -9,11 +9,14 @@ import { initIdeas } from './components/ideas.js';
 console.log('MapCompete frontend initializing...');
 
 // Initialize the application when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   console.log('DOM loaded, initializing app');
   try {
-    // Initialize API service
-    const api = initAPI();
+    // Initialize API service. initAPI() is async because on localhost it first
+    // verifies which local backend (if any) is actually running, and only then
+    // hands the components a working base URL. Every component below therefore
+    // starts with a resolved API instead of racing the detection.
+    const api = await initAPI();
     console.log('API service initialized');
 
     // Initialize components

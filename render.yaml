@@ -18,7 +18,10 @@ services:
       - key: MONGODB_DATABASE
         value: competitor_intelligence
       - key: CORS_ORIGINS
-        value: https://YOUR-APP.vercel.app   # <- set your real Vercel domain
+        # Comma separated allowed origins. Keep the local dev origins so a page
+        # served from localhost can call this API directly; serve_local.py
+        # proxies /api/* and needs no CORS at all.
+        value: https://YOUR-APP.vercel.app,http://localhost:3000,http://127.0.0.1:3000   # <- set your real Vercel domain
       - key: GROQ_API_KEY
         sync: false        # secret
       - key: GEMINI_API_KEY
