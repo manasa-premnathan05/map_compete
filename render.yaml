@@ -3,6 +3,10 @@
 # (Docker runtime is required so Chromium/ChromeDriver are available for the
 #  on-demand Google Maps scraper; scraping only runs when a user presses
 #  Scrape - the service is request-driven, no background workers.)
+#
+# Live deployment: https://map-compete.onrender.com (health: /api/health).
+# Keep CORS_ORIGINS here in sync with the deployment target in
+# frontend/vercel.json - `python verify_deployment.py` checks both.
 services:
   - type: web
     name: mapcompete-backend
@@ -18,10 +22,10 @@ services:
       - key: MONGODB_DATABASE
         value: competitor_intelligence
       - key: CORS_ORIGINS
-        # Comma separated allowed origins. Keep the local dev origins so a page
-        # served from localhost can call this API directly; serve_local.py
-        # proxies /api/* and needs no CORS at all.
-        value: https://YOUR-APP.vercel.app,http://localhost:3000,http://127.0.0.1:3000   # <- set your real Vercel domain
+        # Comma separated allowed origins: the deployed frontend plus the local
+        # dev origins (a page served from localhost may call this API directly;
+        # serve_local.py proxies /api/* and needs no CORS at all).
+        value: https://map-compete.vercel.app,http://localhost:3000,http://127.0.0.1:3000
       - key: GROQ_API_KEY
         sync: false        # secret
       - key: GEMINI_API_KEY
