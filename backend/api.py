@@ -202,6 +202,11 @@ def health_check():
         "status": "healthy" if db_health["ok"] else "degraded",
         "database": "connected" if db_health["ok"] else "disconnected",
         "timestamp": datetime.now().isoformat(),
+        # Which build is answering: Render publishes RENDER_GIT_COMMIT, Vercel
+        # publishes VERCEL_GIT_COMMIT_SHA. Empty in local development. This is
+        # how a response can be traced back to a commit.
+        "commit": (os.environ.get("RENDER_GIT_COMMIT")
+                   or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:12] or None,
     }
     if not db_health["ok"] and db_health.get("error"):
         payload["database_error"] = db_health["error"]
