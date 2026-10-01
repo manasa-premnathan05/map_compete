@@ -1,4 +1,6 @@
 // Posts Component
+import { createProjectReloader } from './project-scope.js';
+
 export function initPosts(api) {
   const postsView = document.getElementById('posts-view');
   if (!postsView) return;
@@ -86,13 +88,22 @@ export function initPosts(api) {
   // Initialize
   async function init() {
     try {
-      await loadCompetitorFilter();
-      await loadPosts();
       setupEventListeners();
+      await postsProjectReload.reload();
     } catch (error) {
       console.error('Error initializing posts component:', error);
     }
   }
+
+  // Project-scoped loading, deferred while this tab is off screen so that a
+  // switch made from another tab reloads only what the user is looking at.
+  const postsProjectReload = createProjectReloader({
+    tab: 'posts',
+    reload: async () => {
+      await loadCompetitorFilter();
+      await loadPosts();
+    }
+  });
 
   // Load competitor filter based on selected project
   async function loadCompetitorFilter() {
@@ -400,9 +411,8 @@ export function initPosts(api) {
 
   // Setup event listeners
   function setupEventListeners() {
-    projectSelectEl?.addEventListener('change', async () => {
-      await loadCompetitorFilter();
-      await loadPosts();
+    projectSelectEl?.addEventListener('change', () => {
+      postsProjectReload.reload();
     });
 
     competitorFilterEl?.addEventListener('change', loadPosts);

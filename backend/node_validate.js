@@ -28,11 +28,18 @@ ids.forEach(function(id) {
 var jsFiles = [
   'frontend/js/components/analytics.js',
   'frontend/js/components/ideas.js',
-  'frontend/js/components/dashboard.js'
+  'frontend/js/components/dashboard.js',
+  'frontend/js/components/competitors.js',
+  'frontend/js/components/posts.js',
+  'frontend/js/components/project-scope.js'
 ];
 jsFiles.forEach(function(f) {
   try {
-    var code = fs.readFileSync(f, 'utf8').replace(/^export\s+/m, '');
+    // The components are browser ES modules: strip the module syntax before the
+    // plain-function parse below, which rejects `import`/`export` outright.
+    var code = fs.readFileSync(f, 'utf8')
+      .replace(/^\s*import\s.*$/gm, '')
+      .replace(/^export\s+(async\s+function|function|const|let|var|class)/gm, '$1');
     new Function(code);
     console.log(f + ': SYNTAX OK');
   } catch(e) {

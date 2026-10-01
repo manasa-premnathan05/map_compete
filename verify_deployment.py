@@ -52,6 +52,7 @@ STATIC_ASSETS = (
     "index.html",
     "js/app.js",
     "js/components/api.js",
+    "js/components/project-scope.js",
     "js/components/dashboard.js",
     "js/components/competitors.js",
     "js/components/posts.js",
@@ -276,8 +277,9 @@ def ui_check(driver, page_url, reporter, label):
         )
 
         # The dashboard fills in *after* the project list. Wait until the title
-        # matches the selected project and the KPIs left their "—" placeholder,
-        # so a stale/hard-coded value can never pass this check.
+        # matches the selected project *and* the KPIs are real numbers, so a
+        # stale/hard-coded value or a number still on its loading placeholder
+        # ("-", "-" or "…") can never pass this check.
         try:
             values = wait_for(
                 driver,
@@ -288,15 +290,16 @@ def ui_check(driver, page_url, reporter, label):
                 "if (!name || !t) return null;"
                 "if (t.textContent.trim() !== name) return null;"
                 "const read = id => (document.getElementById(id)||{}).textContent.trim();"
-                "return { competitors: read('competitors-count'), posts: read('total-posts-count'),"
+                "const comp = read('competitors-count'), post = read('total-posts-count');"
+                "if (!/^[\\d,]+$/.test(comp) || !/^[\\d,]+$/.test(post)) return null;"
+                "return { competitors: comp, posts: post,"
                 " sync: read('dashboard-last-sync') };",
-                timeout=45,
+                timeout=60,
                 message=f"{label} dashboard to show the selected project",
             )
-            loaded = values["competitors"] not in ("", "\u2014", "&mdash;") and values["posts"] not in ("", "\u2014", "&mdash;")
             reporter.check(
                 f"{label}: dashboard shows the selected project's values",
-                loaded,
+                True,
                 f"'{filled.get('name')}': competitors={values['competitors']} posts={values['posts']} sync={values['sync'][:40]!r}",
             )
         except AssertionError as error:

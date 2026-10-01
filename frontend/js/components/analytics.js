@@ -1,5 +1,7 @@
 // Analytics & Merged Market Intelligence Component (PDF Spec Compliance)
 // Features all 6 Modules from Project Specification with real Chart.js graphs and Leaflet Map
+import { createProjectReloader } from './project-scope.js';
+
 export function initAnalytics(api) {
   const analyticsView = document.getElementById('analytics-view');
   if (!analyticsView) return;
@@ -98,12 +100,20 @@ export function initAnalytics(api) {
   async function init() {
     try {
       setupSubnav();
-      await loadAnalyticsData();
       setupEventListeners();
+      await analyticsProjectReload.reload();
     } catch (error) {
       console.error('Error initializing analytics component:', error);
     }
   }
+
+  // Project-scoped loading, deferred while this tab is off screen: this component
+  // alone asks for eight endpoints, so joining a switch made from another tab
+  // would delay the view the user is actually looking at.
+  const analyticsProjectReload = createProjectReloader({
+    tab: 'analytics',
+    reload: loadAnalyticsData
+  });
 
   // Subnav tab switching for the 6 PDF Modules
   function setupSubnav() {
@@ -1927,12 +1937,12 @@ export function initAnalytics(api) {
   function setupEventListeners() {
     projectSelectEl?.addEventListener('change', () => {
       lastAnalysis = null; // analysis belongs to the previous project
-      loadAnalyticsData();
+      analyticsProjectReload.reload();
     });
     mobileProjectSelectEl?.addEventListener('change', (e) => {
       if (projectSelectEl) projectSelectEl.value = e.target.value;
       lastAnalysis = null;
-      loadAnalyticsData();
+      analyticsProjectReload.reload();
     });
 
     // Invalidate map and resize charts when analytics tab is opened

@@ -1,5 +1,7 @@
 // Ideas & AI Content Generation Component
 // Spec: Section 12 — AI-Based Content Analysis & Post Generation
+import { createProjectReloader } from './project-scope.js';
+
 export function initIdeas(api) {
   const ideasView = document.getElementById('ideas-view');
   if (!ideasView) return;
@@ -35,8 +37,14 @@ export function initIdeas(api) {
   async function init() {
     currentProjectId = await resolveProjectId();
     setupEventListeners();
-    await loadAll();
+    await ideasProjectReload.reload();
   }
+
+  // Project-scoped loading, deferred while this tab is off screen.
+  const ideasProjectReload = createProjectReloader({
+    tab: 'ideas',
+    reload: loadAll
+  });
 
   async function loadAll() {
     try {
@@ -452,7 +460,7 @@ export function initIdeas(api) {
     generateIdeasBtn?.addEventListener('click', generateIdeas);
     projectSelectEl?.addEventListener('change', async () => {
       currentProjectId = await resolveProjectId();
-      loadAll();
+      ideasProjectReload.reload();
     });
     ideasCountEl?.addEventListener('keypress', e => { if (e.key === 'Enter') generateIdeas(); });
 

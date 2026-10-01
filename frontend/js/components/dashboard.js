@@ -1,4 +1,6 @@
 // Comprehensive Earthy & Pastel Dashboard Component
+import { createProjectReloader, selectedProjectLabel } from './project-scope.js';
+
 export function initDashboard(api) {
   const dashboardView = document.getElementById('dashboard-view');
   if (!dashboardView) return;
@@ -93,6 +95,12 @@ export function initDashboard(api) {
 
   let currentProjectId = null;
 
+  // Every load takes a sequence number and only the newest one may paint. A slow
+  // answer for a project the user has already switched away from used to land
+  // after the new project's answer and repaint the old company's figures under
+  // the new company's name.
+  let loadSequence = 0;
+
   // Project-list loading is the bootstrap of every view: if it fails, the whole
   // application looks broken. A single failed attempt used to leave the
   // "API unreachable" text on screen indefinitely because nothing re-requested
@@ -136,9 +144,46 @@ export function initDashboard(api) {
         scheduleProjectRecovery();
       } else if (projects.length) {
         // Backend answered again: refill the dashboard for the restored project.
-        await loadDashboardData();
+        dashboardReload.reload();
       }
     }, RECOVER_POLL_MS);
+  }
+
+  // The switcher sits in the page header, so it is reachable from every tab. A
+  // switch made while the dashboard is off screen is remembered and the figures
+  // reload when the Dashboard tab is opened again, instead of competing with the
+  // tab the user is actually looking at for a place in the queue.
+  const dashboardReload = createProjectReloader({
+    tab: 'dashboard',
+    reload: loadDashboardData
+  });
+
+  const kpiEls = [
+    competitorsCountEl, totalPostsCountEl, newPostsCountEl, duplicatesCountEl,
+    ideasCountEl, imagesDownloadedCountEl, failedScrapesCountEl, topTopicEl
+  ];
+
+  // Show the newly chosen project by name and clear the previous figures the
+  // moment it is selected, so the switch is visible immediately rather than
+  // looking ignored until the requests come back.
+  function showProjectLoading() {
+    const label = selectedProjectLabel();
+    if (label && dashboardProjectTitle) dashboardProjectTitle.textContent = label;
+    if (dashboardProjectDesc) dashboardProjectDesc.textContent = 'Loading the latest competitor intelligence...';
+    if (dashboardLastSync) dashboardLastSync.textContent = 'Loading...';
+    kpiEls.forEach(el => { if (el) el.textContent = '\u2026'; });
+  }
+
+  // When nothing can be loaded, state the reason instead of silently leaving the
+  // previous company's numbers under the newly selected company's name.
+  function showProjectLoadFailure(reason) {
+    const label = selectedProjectLabel();
+    if (label && dashboardProjectTitle) dashboardProjectTitle.textContent = label;
+    if (dashboardProjectDesc) dashboardProjectDesc.textContent = 'This project could not be loaded.';
+    if (dashboardLastSync) dashboardLastSync.textContent = `Could not load data: ${reason}`;
+    kpiEls.forEach(el => { if (el) el.textContent = '\u2014'; });
+    renderCompetitorsTable([], []);
+    renderRecentPosts([]);
   }
 
   // Initialize Dashboard
@@ -151,7 +196,7 @@ export function initDashboard(api) {
         setupEventListeners();
         return;
       }
-      await loadDashboardData();
+      await dashboardReload.reload();
       setupEventListeners();
     } catch (err) {
       console.error('Error initializing dashboard:', err);
@@ -226,7 +271,7 @@ export function initDashboard(api) {
     if (!document.hidden && projectLoadFailed) {
       stopProjectRecovery();
       loadProjects({ retries: [0, 1500], silent: true }).then(projects => {
-        if (projects.length) loadDashboardData();
+        if (projects.length) dashboardReload.reload();
       });
     }
   });
@@ -276,30 +321,50 @@ export function initDashboard(api) {
         return;
       }
 
-      // Concurrently fetch all dashboard resources
+      // Claim this load. Only the newest claim is allowed to paint, so a late
+      // answer for a project the user has already left cannot overwrite the
+      // figures of the project that is selected now.
+      const sequence = (loadSequence += 1);
+
+      // Two waves instead of ten concurrent requests. The instance serving the
+      // API has a fraction of a CPU, so a burst of ten requests queues behind
+      // each other while the KPI cards stay empty. The first wave feeds the
+      // headline figures; the widgets follow as soon as it completes. Every
+      // request is still independent (`allSettled`), so one failure never
+      // blanks the dashboard.
       const [
         projectRes,
         competitorsRes,
         postsRes,
-        scrapingLogsRes,
-        topicsRes,
-        keywordsRes,
-        ideasRes,
-        projectPlacesRes,
-        marketGapsRes,
         scrapingStatsRes
       ] = await Promise.allSettled([
         api.getProject(projectId),
         api.getCompetitors(projectId),
         api.getPosts({ project_id: projectId, limit: 100 }),
+        api.getScrapingStats(projectId)
+      ]);
+
+      // The selection moved on while the headline figures were in flight: this
+      // answer belongs to a project that is no longer selected.
+      if (sequence !== loadSequence) return;
+
+      const [
+        scrapingLogsRes,
+        topicsRes,
+        keywordsRes,
+        ideasRes,
+        projectPlacesRes,
+        marketGapsRes
+      ] = await Promise.allSettled([
         api.getScrapingLogs(projectId),
         api.getTopicFrequency(projectId),
         api.getKeywordFrequency(projectId),
         api.getGeneratedIdeas(projectId),
         api.getProjectPlaces(projectId),
-        api.getMarketGaps(projectId),
-        api.getScrapingStats(projectId)
+        api.getMarketGaps(projectId)
       ]);
+
+      if (sequence !== loadSequence) return;
 
       // Every request above is independent (`allSettled`), so a single failing
       // endpoint never blanks the dashboard. When *everything* fails the API is
@@ -314,6 +379,8 @@ export function initDashboard(api) {
         const reason = rejected[0]?.reason?.message || 'the API is unreachable';
         console.error('Dashboard data could not be loaded:', reason);
         window.showToast?.(`Could not load dashboard data: ${reason}`, 'error');
+        showProjectLoadFailure(reason);
+        return;
       }
 
       const project = projectRes.status === 'fulfilled' ? projectRes.value?.project : null;
@@ -339,8 +406,12 @@ export function initDashboard(api) {
       if (dashboardProjectDesc && project?.our_profile) {
         dashboardProjectDesc.textContent = `Tracking local competitors for: ${project.our_profile}`;
       }
-      if (dashboardLastSync && logs.length > 0) {
-        dashboardLastSync.textContent = `Last sync: ${formatTimeAgo(new Date(logs[0].start_time))}`;
+      if (dashboardLastSync) {
+        // Always replace the "Loading..." text a switch puts here, otherwise a
+        // project without collection logs would keep claiming to be loading.
+        dashboardLastSync.textContent = logs.length > 0
+          ? `Last sync: ${formatTimeAgo(new Date(logs[0].start_time))}`
+          : 'No sync recorded yet';
       }
 
       // 2. Update the KPI cards (requirement 20)
@@ -606,7 +677,7 @@ export function initDashboard(api) {
           }
           
           // Refresh dashboard data
-          await loadDashboardData();
+          dashboardReload.reload();
         } catch (error) {
           window.showToast?.(`Scraping error: ${error.message}`, 'error');
         } finally {
@@ -976,17 +1047,19 @@ export function initDashboard(api) {
   function setupEventListeners() {
     // Project switcher
     projectSelectEl?.addEventListener('change', () => {
-      currentProjectId = parseInt(projectSelectEl.value);
+      currentProjectId = parseInt(projectSelectEl.value, 10) || null;
       const mobileSelect = document.getElementById('mobile-project-select');
       if (mobileSelect) mobileSelect.value = projectSelectEl.value;
-      loadDashboardData();
+      showProjectLoading();
+      dashboardReload.reload();
     });
 
     const mobileProjectSelectEl = document.getElementById('mobile-project-select');
     mobileProjectSelectEl?.addEventListener('change', () => {
-      currentProjectId = parseInt(mobileProjectSelectEl.value);
+      currentProjectId = parseInt(mobileProjectSelectEl.value, 10) || null;
       if (projectSelectEl) projectSelectEl.value = mobileProjectSelectEl.value;
-      loadDashboardData();
+      showProjectLoading();
+      dashboardReload.reload();
     });
 
     document.getElementById('mobile-new-project-btn')?.addEventListener('click', () => {
@@ -1016,7 +1089,7 @@ export function initDashboard(api) {
       const changedFor = event.detail?.projectId;
       if (!projectId) return;
       if (changedFor && changedFor !== projectId) return;
-      await loadDashboardData();
+      await dashboardReload.reload();
     };
     document.addEventListener('competitor-added', refreshOnCompetitorChange);
     document.addEventListener('competitor-updated', refreshOnCompetitorChange);
@@ -1120,7 +1193,7 @@ export function initDashboard(api) {
           currentProjectId = res.project.id;
           projectSelectEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
-          await loadDashboardData();
+          await dashboardReload.reload();
         }
 
         // Surface the competitors that were auto-discovered for this location
@@ -1240,7 +1313,7 @@ export function initDashboard(api) {
           if (mobileSelect) mobileSelect.value = String(projectId);
           projectSelectEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
-          await loadDashboardData();
+          await dashboardReload.reload();
         }
       } catch (err) {
         window.showToast?.(`Error updating project: ${err.message}`, 'error');
@@ -1307,7 +1380,7 @@ export function initDashboard(api) {
           if (mobileSelect) mobileSelect.value = String(nextId);
           projectSelectEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else if (projects.length > 0) {
-          await loadDashboardData();
+          await dashboardReload.reload();
         } else {
           resetDashboardForEmptyState();
         }
@@ -1343,11 +1416,11 @@ export function initDashboard(api) {
         } else {
           window.showToast?.(`Competitor updates successfully refreshed! (${summary.succeeded}/${summary.total} scraped)`, 'success');
         }
-        await loadDashboardData();
+        await dashboardReload.reload();
       } catch (err) {
         console.error('Quick scrape failed:', err);
         window.showToast?.(`Crawl failed: ${err.message}`, 'error');
-        await loadDashboardData();
+        await dashboardReload.reload();
       } finally {
         quickScrapeBtn.disabled = false;
       }

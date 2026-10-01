@@ -1,4 +1,6 @@
 // Competitors Component with Smart Google Maps Discovery & Keywords Management
+import { createProjectReloader, readActiveProjectId } from './project-scope.js';
+
 export function initCompetitors(api) {
   const competitorsView = document.getElementById('competitors-view');
   if (!competitorsView) return;
@@ -22,9 +24,7 @@ export function initCompetitors(api) {
   // so relying on a cached id made tracked competitors attach to the wrong
   // (stale) project and new projects showed zero competitors.
   function activeProjectId() {
-    const fromSelect = parseInt(projectSelectEl?.value, 10);
-    const fromMobile = parseInt(document.getElementById('mobile-project-select')?.value, 10);
-    return fromSelect || fromMobile || currentProjectId || 1;
+    return readActiveProjectId() || currentProjectId || 1;
   }
 
   // DOM Elements
@@ -78,43 +78,56 @@ export function initCompetitors(api) {
   async function init() {
     try {
       await loadProjectSelector();
-      // Pre-fill discovery form with project context after selector is loaded
-      if (currentProjectId) {
-        await prefillDiscoveryFromProject(currentProjectId);
-      }
-      await loadCompetitors();
-      await loadKeywords();
       setupEventListeners();
+      await projectReloader.reload();
     } catch (error) {
       console.error('Error initializing competitors component:', error);
     }
   }
 
-  // Load project selector
+  // Project-scoped loading. The header switcher is shared with the dashboard, so
+  // a switch made while another tab is open is deferred: this view catches up
+  // when the Competitors tab is opened instead of adding its requests to the
+  // burst a switch already produces.
+  const projectReloader = createProjectReloader({
+    tab: 'competitors',
+    reload: async () => {
+      currentProjectId = activeProjectId();
+      if (currentProjectId) await prefillDiscoveryFromProject(currentProjectId);
+      await loadCompetitors();
+      await loadKeywords();
+    }
+  });
+
+  // Load the project list this component works with. The <select> element itself
+  // is owned by the dashboard: rewriting its options here used to discard the
+  // company the user had just chosen, because the value was read back *after* the
+  // options had been replaced - which always yields the first project of the
+  // fresh list. The switcher is therefore only filled when it is still empty
+  // (dashboard request failed or has not answered yet).
   async function loadProjectSelector() {
     try {
       const response = await api.getProjects();
       const projects = response.projects || [];
+      if (!projectSelectEl || !projects.length) return;
 
-      if (projectSelectEl) {
-        projectSelectEl.innerHTML = projects.map(p => `
-          <option value="${p.id}">${p.name}</option>
+      const listed = projects.some(p => p.id === parseInt(projectSelectEl.value, 10));
+      if (!listed) {
+        const mobileSelectEl = document.getElementById('mobile-project-select');
+        const preferred = projects.some(p => p.id === currentProjectId) ? currentProjectId : projects[0].id;
+        const optionsHtml = projects.map(p => `
+          <option value="${p.id}" ${p.id === preferred ? 'selected' : ''}>${p.name}</option>
         `).join('');
+        projectSelectEl.innerHTML = optionsHtml;
+        if (mobileSelectEl) mobileSelectEl.innerHTML = optionsHtml;
+      }
 
-        if (projects.length > 0) {
-          // Keep an already-selected project: the dashboard may have switched
-          // the header select before this component finished loading.
-          const existing = parseInt(projectSelectEl.value, 10);
-          const preserved = projects.some(p => p.id === existing);
-          if (!preserved) projectSelectEl.value = String(projects[0].id);
-          currentProjectId = parseInt(projectSelectEl.value, 10) || projects[0].id;
+      currentProjectId = activeProjectId() || projects[0].id;
 
-          // Pre-populate discovery company name with current project name
-          if (discoveryCompanyEl && !discoveryCompanyEl.value) {
-            const active = projects.find(p => p.id === currentProjectId) || projects[0];
-            discoveryCompanyEl.value = active.name;
-          }
-        }
+      // Pre-populate discovery company name with current project name
+      if (discoveryCompanyEl && !discoveryCompanyEl.value) {
+        const active = projects.find(p => p.id === currentProjectId) || projects[0];
+        discoveryCompanyEl.value = active.name;
       }
     } catch (error) {
       console.error('Error loading projects:', error);
@@ -557,25 +570,20 @@ export function initCompetitors(api) {
   function setupEventListeners() {
     // Project Select Change
     if (projectSelectEl) {
-      projectSelectEl.addEventListener('change', async (e) => {
-        currentProjectId = parseInt(e.target.value);
+      projectSelectEl.addEventListener('change', (e) => {
+        currentProjectId = parseInt(e.target.value, 10) || readActiveProjectId();
         const mobileSelect = document.getElementById('mobile-project-select');
         if (mobileSelect) mobileSelect.value = e.target.value;
-        await loadCompetitors();
-        await loadKeywords();
-        // Pre-fill discovery form with project context
-        await prefillDiscoveryFromProject(currentProjectId);
+        projectReloader.reload();
       });
     }
 
     const mobileProjectSelectEl = document.getElementById('mobile-project-select');
     if (mobileProjectSelectEl) {
-      mobileProjectSelectEl.addEventListener('change', async (e) => {
-        currentProjectId = parseInt(e.target.value);
+      mobileProjectSelectEl.addEventListener('change', (e) => {
+        currentProjectId = parseInt(e.target.value, 10) || readActiveProjectId();
         if (projectSelectEl) projectSelectEl.value = e.target.value;
-        await loadCompetitors();
-        await loadKeywords();
-        await prefillDiscoveryFromProject(currentProjectId);
+        projectReloader.reload();
       });
     }
 

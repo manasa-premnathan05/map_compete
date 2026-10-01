@@ -71,9 +71,11 @@ _ideas_check.py
 
 # Verification scripts
 verify_*.py
-# ...except the deployment wiring check, which belongs to the repo so the
-# frontend <-> backend (Vercel/Render/localhost) wiring can be re-tested any time
+# ...except the deployment checks, which belong to the repo so the frontend <->
+# backend (Vercel/Render/localhost) wiring and the project switcher can be
+# re-tested any time.
 !verify_deployment.py
+!verify_project_switch.py
 
 # Cache
 .cache/
