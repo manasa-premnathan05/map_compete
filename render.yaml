@@ -38,5 +38,11 @@ services:
         value: "4"         # threads keep health checks and reads answered during a scrape
       - key: GUNICORN_TIMEOUT
         value: "1800"      # project-wide scrapes can take minutes
+      - key: SCRAPE_JS_HEAP_MB
+        value: "192"       # per-renderer JS budget, NOT total browser memory
+      - key: SCRAPE_BLOCK_IMAGES
+        value: "true"
+      - key: MALLOC_ARENA_MAX
+        value: "2"         # reduce glibc heap fragmentation across threads
       - key: FLASK_ENV
         value: production

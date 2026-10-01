@@ -166,7 +166,17 @@ def test_competitor_post_routes():
           and res.get_json()["competitors_count"] == 1)
     res = client.get(f"/api/projects/{pid}/scraping-logs")
     check("scraping-logs route", res.status_code == 200
-          and res.get_json()["logs"] == [])
+          and res.get_json()["logs"] == [] and "stats" in res.get_json())
+    original_stats = api.db.get_scraping_stats
+    def unexpected_stats(*args, **kwargs):
+        raise AssertionError("logs-only reads must not recompute statistics")
+    api.db.get_scraping_stats = unexpected_stats
+    try:
+        res = client.get(f"/api/projects/{pid}/scraping-logs?include_stats=0")
+        check("logs-only skips statistics", res.status_code == 200
+              and res.get_json()["logs"] == [] and "stats" not in res.get_json())
+    finally:
+        api.db.get_scraping_stats = original_stats
     res = client.get(f"/api/projects/{pid}/market-gaps")
     check("market-gaps route", res.status_code == 200)
     res = client.get(f"/api/projects/{pid}/reviews")
@@ -183,10 +193,35 @@ def test_competitor_post_routes():
     client.delete(f"/api/projects/{pid}")
 
 
+def test_browser_admission():
+    print("\n== browser memory admission ==")
+    client = fresh_client()
+    api._browser_operation_lock.acquire()
+    try:
+        for path in ('/api/places/search', '/api/places/resolve',
+                     '/api/projects/1/discover-competitors',
+                     '/api/projects/1/scrape', '/api/competitors/1/scrape'):
+            res = client.post(path, json={})
+            check(f"busy browser rejected: {path}", res.status_code == 429
+                  and res.get_json()['error_type'] == 'SCRAPER_BUSY')
+        res = client.get('/api/places/diagnostics?probe=1')
+        check("browser probe respects admission", res.status_code == 429)
+        check("reads remain available during scrape", client.get('/api/projects').status_code == 200)
+    finally:
+        api._browser_operation_lock.release()
+    res = client.post('/api/places/search', json={})
+    check("validation returns normally after browser released", res.status_code == 400)
+    acquired = api._browser_operation_lock.acquire(blocking=False)
+    check("request teardown releases browser admission", acquired)
+    if acquired:
+        api._browser_operation_lock.release()
+
+
 if __name__ == "__main__":
     test_health_and_unavailable()
     test_project_crud_routes()
     test_competitor_post_routes()
+    test_browser_admission()
 
     print("\n" + "=" * 60)
     if FAILURES:

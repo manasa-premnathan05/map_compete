@@ -348,6 +348,31 @@ export function initDashboard(api) {
       // answer belongs to a project that is no longer selected.
       if (sequence !== loadSequence) return;
 
+      // Paint the useful first wave before waiting for optional widgets. A slow
+      // market-gap or analytics read must not keep the entire project loading.
+      const headlineProject = projectRes.status === 'fulfilled' ? projectRes.value?.project : null;
+      const headlineCompetitors = competitorsRes.status === 'fulfilled' ? (competitorsRes.value?.competitors || []) : [];
+      const headlinePosts = postsRes.status === 'fulfilled' ? (postsRes.value?.posts || []) : [];
+      const headlineStats = scrapingStatsRes.status === 'fulfilled' ? scrapingStatsRes.value : null;
+      if (headlineProject) {
+        if (dashboardProjectTitle) dashboardProjectTitle.textContent = headlineProject.name;
+        if (dashboardProjectDesc) dashboardProjectDesc.textContent = headlineProject.our_profile
+          ? `Tracking local competitors for: ${headlineProject.our_profile}` : 'Competitor intelligence for this project';
+      }
+      if (competitorsCountEl) competitorsCountEl.textContent = headlineStats?.unique_businesses ?? headlineCompetitors.length;
+      if (totalPostsCountEl) totalPostsCountEl.textContent = headlineStats?.total_posts ?? headlinePosts.length;
+      if (headlineStats) {
+        if (newPostsCountEl) newPostsCountEl.textContent = headlineStats.new_posts_latest_run ?? 0;
+        if (duplicatesCountEl) duplicatesCountEl.textContent = headlineStats.duplicates_skipped_latest_run ?? 0;
+        if (ideasCountEl) ideasCountEl.textContent = headlineStats.generated_content_count ?? 0;
+        if (imagesDownloadedCountEl) imagesDownloadedCountEl.textContent = headlineStats.totals?.images_downloaded ?? 0;
+        if (failedScrapesCountEl) failedScrapesCountEl.textContent = headlineStats.totals?.failed_attempts ?? 0;
+        if (dashboardLastSync) dashboardLastSync.textContent = headlineStats.last_scrape_at
+          ? `Last sync: ${formatTimeAgo(new Date(headlineStats.last_scrape_at))}` : 'No sync recorded yet';
+      }
+      renderCompetitorsTable(headlineCompetitors, headlinePosts);
+      renderRecentPosts(headlinePosts);
+
       const [
         scrapingLogsRes,
         topicsRes,
@@ -356,7 +381,7 @@ export function initDashboard(api) {
         projectPlacesRes,
         marketGapsRes
       ] = await Promise.allSettled([
-        api.getScrapingLogs(projectId),
+        api.getScrapingLogs(projectId, { includeStats: false }),
         api.getTopicFrequency(projectId),
         api.getKeywordFrequency(projectId),
         api.getGeneratedIdeas(projectId),

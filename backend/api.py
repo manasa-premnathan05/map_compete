@@ -2,10 +2,11 @@ import os
 import json
 import re
 import logging
+from threading import Lock
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 
 # Load environment variables from .env file
@@ -78,6 +79,36 @@ CORS(app, resources={r"/api/*": {"origins": _cors_origins}})  # Enable CORS for 
 # environment / .env - credentials are never hardcoded or logged.
 db = DatabaseManager()
 ai_service = AIServiceManager()
+
+# One browser-backed operation per process. Render runs ONE worker; the other
+# threads stay available for reads rather than starting more Chromium trees.
+_browser_operation_lock = Lock()
+_browser_endpoints = {
+    'resolve_place', 'search_places', 'discover_project_competitors',
+    'scrape_single_competitor', 'scrape_competitors',
+}
+
+
+@app.before_request
+def _limit_browser_operations():
+    needs_browser = request.endpoint in _browser_endpoints or (
+        request.endpoint == 'places_diagnostics' and request.args.get('probe') == '1'
+    )
+    if request.method == 'OPTIONS' or not needs_browser:
+        return None
+    if not _browser_operation_lock.acquire(blocking=False):
+        return jsonify({
+            'error': 'A Google Maps operation is already running. Try again when it finishes.',
+            'error_type': 'SCRAPER_BUSY',
+        }), 429, {'Retry-After': '10'}
+    g.browser_operation_acquired = True
+    return None
+
+
+@app.teardown_request
+def _release_browser_operation(error=None):
+    if g.pop('browser_operation_acquired', False):
+        _browser_operation_lock.release()
 
 
 @app.errorhandler(DatabaseUnavailableError)
@@ -1234,10 +1265,6 @@ def scrape_single_competitor(competitor_id):
                 industry=industry,
                 expected_address=competitor.get('address'),
             )
-            try:
-                scraper.close_driver()
-            except Exception:
-                pass
         except Exception as ex:
             error_str = str(ex)
             if "CAPTCHA_REQUIRED" in error_str:
@@ -1250,6 +1277,9 @@ def scrape_single_competitor(competitor_id):
                 scrape_error = f"SCRAPER_ERROR: {error_str}"
                 scrape_status = "FAILED"
             logger.warning(f"Single-competitor scrape failed for {competitor['name']}: {ex}")
+        finally:
+            if scraper is not None:
+                scraper.close_driver()
 
         # Diagnostics from the scrape run decide what may be persisted: only a
         # page verified as this business contributes posts/reviews/stats.
@@ -1991,11 +2021,15 @@ def get_scraping_logs(project_id):
     try:
         limit = request.args.get('limit', 20, type=int)
         logs = db.get_scraping_logs(project_id, limit)
-        return jsonify({
+        payload = {
             "logs": logs,
             "count": len(logs),
-            "stats": db.get_scraping_stats(project_id),
-        })
+        }
+        # Dashboard already requests stats separately. Preserve the original
+        # response for other callers without doing the expensive work twice.
+        if request.args.get('include_stats', '1') != '0':
+            payload["stats"] = db.get_scraping_stats(project_id)
+        return jsonify(payload)
     except Exception as e:
         logger.error(f"Error getting scraping logs: {e}")
         return jsonify({"error": str(e)}), 500

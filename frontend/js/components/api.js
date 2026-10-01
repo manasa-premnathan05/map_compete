@@ -349,8 +349,8 @@ export async function initAPI() {
       return response.json();
     },
 
-    getScrapingLogs: async (projectId) => {
-      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scraping-logs`);
+    getScrapingLogs: async (projectId, { includeStats = true } = {}) => {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scraping-logs?include_stats=${includeStats ? 1 : 0}`);
       if (!response.ok) throw new Error('Failed to fetch scraping logs');
       return response.json();
     },

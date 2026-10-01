@@ -138,10 +138,10 @@ class GoogleMapsScraper:
             "--disable-features=site-per-process,Translate,BackForwardCache,"
             "MediaRouter,OptimizationHints,InterestFeedContentSuggestions"
         )
-        chrome_options.add_argument("--renderer-process-limit=2")
+        chrome_options.add_argument("--renderer-process-limit=1")
         if _env_flag("SCRAPE_BLOCK_IMAGES", True):
             chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-        heap_mb = str(os.environ.get("SCRAPE_JS_HEAP_MB", "384")).strip()
+        heap_mb = str(os.environ.get("SCRAPE_JS_HEAP_MB", "192")).strip()
         if heap_mb.isdigit() and int(heap_mb) > 0:
             chrome_options.add_argument(f"--js-flags=--max-old-space-size={int(heap_mb)}")
 
@@ -188,10 +188,19 @@ class GoogleMapsScraper:
         if self.driver:
             try:
                 self.driver.quit()
-            except:
-                pass
-            self.driver = None
-            logger.info("WebDriver closed")
+            except Exception as exc:
+                logger.warning("WebDriver quit failed: %s", type(exc).__name__)
+            finally:
+                # Stop the owned driver service even when quit() fails. Never
+                # kill by process name: that could affect an unrelated browser.
+                service = getattr(self.driver, 'service', None)
+                if service is not None:
+                    try:
+                        service.stop()
+                    except Exception:
+                        pass
+                self.driver = None
+                logger.info("WebDriver closed")
 
     # ------------------------------------------------------------------
     # Google Maps page-state detection (shared by search + resolve)
@@ -2451,8 +2460,6 @@ class GoogleMapsScraper:
             self.industry = industry
 
         try:
-            self.setup_driver()
-
             for competitor in competitors:
                 name = competitor['name']
                 gmap_url = competitor['gmap_url']
@@ -2531,6 +2538,9 @@ class GoogleMapsScraper:
                         detail['error'] = f"SCRAPER_ERROR: {error_str}"
                         logger.error(f"Failed to scrape competitor {name}: {e}")
                 finally:
+                    # Maps retains renderer/DOM caches across visits. Release
+                    # the whole browser tree before moving to the next business.
+                    self.close_driver()
                     detail['end_time'] = datetime.now().isoformat()
                     detail['duration_seconds'] = max(
                         0, int((datetime.now() - started_at).total_seconds())

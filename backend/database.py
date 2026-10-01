@@ -1780,13 +1780,16 @@ class DatabaseManager:
 
         proj_comps = self.competitors.distinct("id", {"project_id": project_id})
         scope: Dict[int, Dict] = {}
+        # Stats need neither review text nor raw HTML/media. Fetching complete
+        # post documents multiplied memory usage during concurrent dashboards.
+        stats_fields = {"id": 1, "post_source": 1, "scrape_date": 1, "_id": 0}
         if proj_comps:
-            for post in self.posts.find({"competitor_id": {"$in": proj_comps}}):
+            for post in self.posts.find({"competitor_id": {"$in": proj_comps}}, stats_fields):
                 scope[post["id"]] = post
             linked_ids = self.post_competitors.distinct(
                 "post_id", {"competitor_id": {"$in": proj_comps}}
             )
-            for post in self.posts.find({"id": {"$in": linked_ids}}):
+            for post in self.posts.find({"id": {"$in": linked_ids}}, stats_fields):
                 scope[post["id"]] = post
 
         total_posts = len(scope)

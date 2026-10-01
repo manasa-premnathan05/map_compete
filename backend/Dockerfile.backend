@@ -14,6 +14,7 @@ FROM python:3.11-slim-bookworm
 # CHROMEDRIVER_PATH . matching driver from the same Debian package source.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    MALLOC_ARENA_MAX=2 \
     CHROME_BINARY=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromium-driver
 
