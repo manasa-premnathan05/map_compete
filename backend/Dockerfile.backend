@@ -1,13 +1,17 @@
 # Multi-arch base image: runs on amd64 (Render) AND arm64 (local Apple
 # silicon / other hosts).
 #
+# The suite is pinned (bookworm) rather than floating: `python:3.11-slim`
+# silently moves to the next Debian release, whose chromium/chromium-driver
+# dependency set can differ, and that is exactly how an intermittent
+# `Exited with status 1` build appears after code that has not changed.
+FROM python:3.11-slim-bookworm
+
 # Application data lives in MongoDB Atlas - the container holds NO database
 # file and needs no persistent volume (Render's filesystem may be ephemeral).
 #
 # CHROME_BINARY ..... Debian's chromium browser (built for amd64 AND arm64).
 # CHROMEDRIVER_PATH . matching driver from the same Debian package source.
-#   (Google Chrome's .deb and Chrome-for-Testing drivers are x86-only.)
-FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     CHROME_BINARY=/usr/bin/chromium \

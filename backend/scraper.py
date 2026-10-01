@@ -34,6 +34,15 @@ except ImportError:  # pragma: no cover - allow running from any cwd
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    """Read a boolean environment switch, e.g. SCRAPE_BLOCK_IMAGES=false."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() not in ("0", "false", "no", "off")
+
+
 class GoogleMapsScraper:
     def __init__(self, headless: bool = True):
         self.headless = headless
@@ -107,6 +116,34 @@ class GoogleMapsScraper:
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+        # Memory discipline: a Chromium session is by far the largest consumer
+        # inside an instance with a 512 MB ceiling, and the scraper only ever
+        # reads rendered text and image URLs - never the pixels. Blocking image
+        # loading, capping renderer processes and switching off background work
+        # keep a run inside the limit instead of the whole service being killed.
+        # The image URLs are still present on the elements (they are read from
+        # src / style), so collected media is unaffected.
+        #   SCRAPE_BLOCK_IMAGES=false   restore image loading
+        #   SCRAPE_JS_HEAP_MB=0         leave the JavaScript heap uncapped
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-background-networking")
+        chrome_options.add_argument("--disable-component-update")
+        chrome_options.add_argument("--disable-default-apps")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--metrics-recording-only")
+        chrome_options.add_argument("--mute-audio")
+        chrome_options.add_argument(
+            "--disable-features=site-per-process,Translate,BackForwardCache,"
+            "MediaRouter,OptimizationHints,InterestFeedContentSuggestions"
+        )
+        chrome_options.add_argument("--renderer-process-limit=2")
+        if _env_flag("SCRAPE_BLOCK_IMAGES", True):
+            chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+        heap_mb = str(os.environ.get("SCRAPE_JS_HEAP_MB", "384")).strip()
+        if heap_mb.isdigit() and int(heap_mb) > 0:
+            chrome_options.add_argument(f"--js-flags=--max-old-space-size={int(heap_mb)}")
 
         binaries = self._candidate_browser_binaries()
         if binaries:

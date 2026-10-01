@@ -288,12 +288,12 @@ Every request passes through the same sequence.
 | Resource not found | HTTP 404 with a message |
 | Database not configured or unreachable | HTTP 503 with a message stating the reason and never containing credentials |
 | Automation or external service failure | HTTP 502 or HTTP 500 with a reason code such as a verification challenge, refused access, missing result, timeout or browser error |
-| Health endpoint, healthy | HTTP 200 with the service status, the database status and a timestamp |
+| Health endpoint, healthy | HTTP 200 with the service status, the database status, a timestamp and the identifier of the build that answered |
 | Health endpoint, database unavailable | HTTP 503 with the service status, the database status and a description of the database problem |
 
 ### 6.4 Health and diagnostics
 
-The health endpoint answers even when the database is unavailable, because its purpose is to report the state of the whole system rather than to serve data. It reports the service as healthy or degraded, and it reports the database separately as connected or disconnected. This distinction is what allows a hosting platform and an operator to determine whether a failure belongs to the service or to the database.
+The health endpoint answers even when the database is unavailable, because its purpose is to report the state of the whole system rather than to serve data. It reports the service as healthy or degraded, and it reports the database separately as connected or disconnected. This distinction is what allows a hosting platform and an operator to determine whether a failure belongs to the service or to the database. The response also carries the identifier of the commit that is answering, which is how an operator confirms that a deployment has actually gone live rather than inferring it from timing; it is null when the service runs outside a hosting platform that publishes it.
 
 A separate diagnostics endpoint reports the state of the scraping environment: whether a browser engine can be located, whether the browser can be started, and whether the remote site can be reached. It does not scrape, so it can be used freely to establish whether collection is possible from the current host.
 
@@ -301,7 +301,7 @@ Collection activity is additionally recorded in persistent log files beneath the
 
 ### 6.5 Concurrency and long-running operations
 
-In production the service runs under a multi-process server with a worker count suited to the memory available, and with a request timeout sized for the longest legitimate operation, which is a collection run. Because the server is synchronous, a collection request occupies one worker for its duration; this is the reason the interface performs project-wide collection one competitor at a time, and the reason the health endpoint is deliberately independent of the database so that it remains responsive.
+In production the service runs as a single worker process with a small pool of threads, and with a request timeout sized for the longest legitimate operation, which is a collection run. One process is what fits the memory of a small instance, because the browser that a collection run starts is by far the largest consumer, and a second process costs its own memory before it does any work. Threads are what keep the service answering: a collection request occupies one thread for its duration, while the health endpoint and the reads issued by the other views are served by the remaining ones. This is also the reason the interface performs project-wide collection one competitor at a time, and the reason the health endpoint is deliberately independent of the database so that it remains responsive.
 
 The browser process is started per collection run and closed at the end of that run, whether the run succeeded or failed, so that no browser process accumulates between runs.
 
@@ -314,6 +314,10 @@ Competitor activity on Google Maps is not available through an interface intende
 ### 7.2 Browser provisioning
 
 The browser is started in headless mode. The engine binary is located in a defined order of preference: an explicitly configured location first, then the conventional locations used by Linux container images, then the system default. This order allows the same code to run on a developer workstation and inside the container image without modification. Where the driver is supplied by the container, no download is performed at run time; where the driver must be obtained, it is obtained before the run rather than during it, so that a slow download cannot be confused with a slow page.
+
+Because the browser process is the largest consumer of memory in the application, it is configured with a deliberate memory discipline: image loading is disabled, because the extractor reads image addresses from the document rather than the pixels, the number of renderer processes and background work is limited, and the JavaScript heap is capped. Each of these reduces the peak of a run without changing what is extracted. Two of them are switches rather than fixed values, so a run can be adjusted without a code change: an environment variable can restore image loading, and another can remove the heap cap.
+
+The container image pins the suite of its base image rather than following the floating tag. The browser package and its driver are provided by that suite, so an unpinned base image can change the available packages on a code change that touches none of them, which is how an intermittent build failure appears.
 
 The container image includes the engine and its dependencies so that hosted collection behaves in the same way as local collection, and so that a hosted environment is not missing a component that local development happens to provide.
 
@@ -411,7 +415,15 @@ The address that was selected is written to the browser console, prefixed with t
 
 The page header holds the project selector, which applies to every view. Operations that take time, such as discovery, collection and generation, display their progress and report their outcome as a notification. Where a request fails, the reason reported by the service is shown, including the status code the platform returned.
 
+The selector is owned by one component only, the dashboard, and every other view reads it when it needs the active project. This matters because a view that rebuilds the list itself cannot preserve the user's choice: replacing the options of a select resets it to the first option, so reading the value back afterwards yields the first project rather than the chosen one. A project list that arrived late would therefore silently undo a choice the user had just made.
+
+Choosing a project is reflected at once: the heading of the dashboard takes the name of the project that was chosen and the previous figures are cleared, so the switch is visible while the data is still being requested rather than after it arrives. A load that belongs to a project the user has already left is discarded instead of being painted, so a slow answer can never overwrite the newer project's figures with the older project's numbers. When a project cannot be loaded at all, the reason is stated in place of the figures, instead of leaving the previous company's numbers under the new company's name.
+
+Because the hosting platform serves requests one at a time, a switch reloads only the view that is on screen; a view whose tab is closed marks itself as out of date and reloads when its tab is opened. Selecting a project previously made every view request its data simultaneously, which queued the figures of the project the user had just chosen behind every other view's requests.
+
 Because the hosting platform can briefly refuse requests while an instance restarts or wakes from suspension, the project list is treated as a recoverable operation rather than a fatal one. It is retried with backoff, retried again whenever the tab becomes visible, and polled in the background for a few minutes after a failure; the failure notice clears itself as soon as a request succeeds and the dashboard refills for the restored project. Every request also carries an abort timeout, so a stalled call reports a failure instead of leaving the interface waiting indefinitely.
+
+The dashboard loads in two waves rather than as a single burst of requests. The first wave supplies the headline figures, so the top of the view fills as soon as those four requests return; the widget requests follow immediately after. The service runs on an instance with a fraction of a processor, so ten simultaneous requests would queue behind one another while the visible figures stayed empty, and each wave holds the number of simultaneous requests to a small, deliberate group. The requests remain independent of one another, so a single failed request still leaves the rest of the view intact.
 
 ### 9.4 External dependencies
 
@@ -573,6 +585,7 @@ Where the development machine cannot reach the database, the first method remain
 | verify_frontend_ui.py | End to end | Running service and interface | That every interactive control works against the service |
 | verify_api_base.mjs | Unit | Node runtime only | That the service address resolution selects the correct address in each environment |
 | verify_deployment.py | End to end | Network access | That the deployed and local parts are correctly connected, including a real browser check |
+| verify_project_switch.py | End to end | Running service and interface | That choosing a project switches the application, reloads only the open view, and is never undone by a late request |
 | backend/node_validate.js | Static | Node runtime only | That the interface markup contains the expected elements and that the modules parse |
 
 ### 13.2 Coverage
@@ -594,7 +607,7 @@ On a hosted plan in which the service is suspended when idle, the first request 
 
 ### 14.2 Resource limits
 
-The collection subsystem starts a browser engine, which is the most memory-intensive part of the application. On a small hosting instance a collection request can approach the memory limit, in which case the run may be terminated before it completes. Because collection is performed one competitor at a time and each competitor's result is stored before the next begins, a termination of this kind leaves the previously collected content intact. Complete collection of a large competitor set is most reliably performed from a machine with sufficient memory, and the same content is then available to the hosted interface because it is stored centrally.
+The collection subsystem starts a browser engine, which is the most memory-intensive part of the application. On a small hosting instance a collection request can approach the memory limit, in which case the run may be terminated before it completes. The browser is therefore configured to spend as little memory as the extraction allows: images are not loaded, renderer processes are limited and the script heap is capped, which keeps the peak of a run well below what an unrestricted browser would reach. Because collection is performed one competitor at a time and each competitor's result is stored before the next begins, a termination of this kind leaves the previously collected content intact. Complete collection of a large competitor set is most reliably performed from a machine with sufficient memory, and the same content is then available to the hosted interface because it is stored centrally.
 
 ### 14.3 Database access from a development machine
 
@@ -602,7 +615,7 @@ The cluster accepts connections only from addresses that are listed in its netwo
 
 ### 14.4 Long-running operations
 
-Discovery, collection and generation can each take from seconds to minutes. The interface reports progress for each of these operations, and the service is configured with a request timeout that accommodates the longest of them. Because the service is synchronous, a long operation occupies one worker until it finishes; the worker count should therefore remain small on a small instance, and the interface avoids issuing several long operations at once.
+Discovery, collection and generation can each take from seconds to minutes. The interface reports progress for each of these operations, and the service is configured with a request timeout that accommodates the longest of them. Because the service serves long operations from a single process, a long operation occupies one thread until it finishes; the thread count should therefore remain small on a small instance, and the interface avoids issuing several long operations at once. Serving a collection run from one thread is also why a switch or a page load during that run is still answered instead of waiting for the run to end.
 
 ### 14.5 Diagnostics reference
 

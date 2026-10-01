@@ -33,7 +33,9 @@ services:
       - key: GROK_API_KEY
         sync: false        # secret (legacy alias, optional)
       - key: GUNICORN_WORKERS
-        value: "2"         # Render Free has 512 MB RAM - keep workers low
+        value: "1"         # one process: the browser needs most of the 512 MB
+      - key: GUNICORN_THREADS
+        value: "4"         # threads keep health checks and reads answered during a scrape
       - key: GUNICORN_TIMEOUT
         value: "1800"      # project-wide scrapes can take minutes
       - key: FLASK_ENV
