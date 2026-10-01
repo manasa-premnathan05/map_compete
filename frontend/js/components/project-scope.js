@@ -45,11 +45,6 @@ export function selectedProjectLabel() {
   return label && !/^loading/i.test(label) ? label : null;
 }
 
-export function isTabVisible(tab) {
-  const view = document.getElementById(VIEW_ID_BY_TAB[tab]);
-  return !!view && !view.classList.contains('hidden');
-}
-
 // Wrap a component's project-scoped loader so that a switch made from any tab
 // reloads only the tab that is on screen, and a hidden tab catches up when it
 // is opened. `reload` receives no arguments and must not reject.
@@ -95,11 +90,5 @@ export function createProjectReloader({ tab, reload }) {
     if (stale) run();
   });
 
-  return {
-    reload: run,
-    markStale() {
-      stale = true;
-    },
-    isVisible: viewVisible
-  };
+  return { reload: run };
 }
