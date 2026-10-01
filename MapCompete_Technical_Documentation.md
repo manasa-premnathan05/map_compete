@@ -112,6 +112,8 @@ map_compete/
     css/style.css           Styling beyond the utility framework
     js/app.js               Entry point, tab and dialog behaviour
     js/components/          Dashboard, competitors, posts, analytics, ideas, API client
+  .github/workflows/      keepalive.yml - periodic health ping that keeps the
+                          free-tier instance awake
   docker-compose.yml        Local container composition
   render.yaml               Blueprint for the hosted service
   serve_local.py            Local development server with request forwarding
@@ -407,7 +409,9 @@ The address that was selected is written to the browser console, prefixed with t
 
 ### 9.3 Interface behaviour
 
-The page header holds the project selector, which applies to every view. Operations that take time, such as discovery, collection and generation, display their progress and report their outcome as a notification. Where a request fails, the reason reported by the service is shown; a failed list request replaces the loading placeholder with an explicit statement, so that a non-responsive system cannot be mistaken for a system that is still loading.
+The page header holds the project selector, which applies to every view. Operations that take time, such as discovery, collection and generation, display their progress and report their outcome as a notification. Where a request fails, the reason reported by the service is shown, including the status code the platform returned.
+
+Because the hosting platform can briefly refuse requests while an instance restarts or wakes from suspension, the project list is treated as a recoverable operation rather than a fatal one. It is retried with backoff, retried again whenever the tab becomes visible, and polled in the background for a few minutes after a failure; the failure notice clears itself as soon as a request succeeds and the dashboard refills for the restored project. Every request also carries an abort timeout, so a stalled call reports a failure instead of leaving the interface waiting indefinitely.
 
 ### 9.4 External dependencies
 
@@ -586,7 +590,7 @@ The suite covers four areas. The persistence and contract tests establish the be
 
 ### 14.1 Cold start behaviour
 
-On a hosted plan in which the service is suspended when idle, the first request after a period of inactivity is served only after the service has been resumed. During that interval a request through the frontend forwarding rule can be answered with a gateway error. This is a property of the hosting plan rather than of the application, and the recommended handling is to allow up to a minute and to retry, or to keep the service warm with periodic requests. The health endpoint is the cheapest request with which to do so.
+On a hosted plan in which the service is suspended when idle, the first request after a period of inactivity is served only after the service has been resumed. During that interval a request through the frontend forwarding rule can be answered with a gateway error. This is a property of the hosting plan rather than of the application, and the recommended handling is to allow up to a minute and to retry, or to keep the service warm with periodic requests. The health endpoint is the cheapest request with which to do so, and the repository includes a scheduled workflow (.github/workflows/keepalive.yml) that pings it every ten minutes; an uptime monitor can serve the same purpose and additionally records the uptime figure. The interface treats such a refusal as a recoverable condition: it retries the project list with backoff, re-checks when the tab becomes visible, and clears the failure notice automatically once the service answers.
 
 ### 14.2 Resource limits
 

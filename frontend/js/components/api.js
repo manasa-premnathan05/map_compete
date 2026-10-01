@@ -30,6 +30,38 @@ const LOCAL_API_CANDIDATES = [
   { base: DEPLOYED_API_BASE, timeoutMs: 15000 }
 ];
 
+// Requests must never hang for ever: a stalled call used to leave the whole
+// interface waiting with no error at all. Every request now carries an abort
+// timeout, with a much larger budget for the operations that legitimately take
+// minutes (collection, generation) than for list reads.
+const DEFAULT_TIMEOUT_MS = 300000;   // 5 minutes - one collection run
+const LIST_TIMEOUT_MS = 20000;       // list and detail reads answer in milliseconds
+
+function callFetch(url, options) {
+  // Indirection so a wrapper (or a test) can replace globalThis.fetch.
+  return globalThis.fetch(url, options);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = null) {
+  if (options.signal || typeof AbortController === 'undefined') {
+    return callFetch(url, options);
+  }
+  // Reads fail fast so a caller can retry; writes, collection and generation get
+  // the long budget because they legitimately take minutes.
+  const isRead = !options.method || String(options.method).toUpperCase() === 'GET';
+  const budget = timeoutMs ?? (isRead ? LIST_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`Request timed out after ${Math.round(budget / 1000)}s`)),
+    budget
+  );
+  try {
+    return await callFetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function isLocalHostname(host) {
   return !host
     || host === 'localhost'
@@ -44,7 +76,7 @@ async function probeCandidate({ base, timeoutMs }) {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    const response = await fetch(`${base}/health`, {
+    const response = await fetchWithTimeout(`${base}/health`, {
       signal: controller ? controller.signal : undefined,
       cache: 'no-store'
     });
@@ -120,13 +152,19 @@ export async function initAPI() {
   return {
     // Project methods
     getProjects: async () => {
-      const response = await fetch(`${BASE_URL}/projects`);
-      if (!response.ok) throw new Error('Failed to fetch projects');
+      // List reads must fail fast so the caller can retry quickly: a platform
+      // proxy (502/504) or a stalled request is surfaced within seconds.
+      const response = await fetchWithTimeout(`${BASE_URL}/projects`, {}, LIST_TIMEOUT_MS);
+      if (!response.ok) {
+        const error = new Error(`Failed to fetch projects (HTTP ${response.status})`);
+        error.status = response.status;
+        throw error;
+      }
       return response.json();
     },
 
     createProject: async (projectData) => {
-      const response = await fetch(`${BASE_URL}/projects`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectData)
@@ -136,13 +174,13 @@ export async function initAPI() {
     },
 
     getProject: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}`);
       if (!response.ok) throw new Error('Failed to fetch project');
       return response.json();
     },
 
     updateProject: async (projectId, projectData) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectData)
@@ -152,7 +190,7 @@ export async function initAPI() {
     },
 
     deleteProject: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete project');
@@ -161,13 +199,13 @@ export async function initAPI() {
 
     // Competitor methods
     getCompetitors: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/competitors`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/competitors`);
       if (!response.ok) throw new Error('Failed to fetch competitors');
       return response.json();
     },
 
     addCompetitor: async (projectId, competitorData) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/competitors`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/competitors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(competitorData)
@@ -177,7 +215,7 @@ export async function initAPI() {
     },
 
     updateCompetitor: async (competitorId, competitorData) => {
-      const response = await fetch(`${BASE_URL}/competitors/${competitorId}`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitorId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(competitorData)
@@ -187,7 +225,7 @@ export async function initAPI() {
     },
 
     deleteCompetitor: async (competitorId) => {
-      const response = await fetch(`${BASE_URL}/competitors/${competitorId}`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitorId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete competitor');
@@ -195,7 +233,7 @@ export async function initAPI() {
     },
 
     discoverCompetitors: async (projectId, discoveryData) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/discover-competitors`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/discover-competitors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(discoveryData || {})
@@ -209,13 +247,13 @@ export async function initAPI() {
 
     // Keyword methods
     getKeywords: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/keywords`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/keywords`);
       if (!response.ok) throw new Error('Failed to fetch keywords');
       return response.json();
     },
 
     addKeyword: async (projectId, keywordData) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/keywords`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(keywordData)
@@ -225,7 +263,7 @@ export async function initAPI() {
     },
 
     deleteKeyword: async (keywordId) => {
-      const response = await fetch(`${BASE_URL}/keywords/${keywordId}`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/keywords/${keywordId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete keyword');
@@ -242,13 +280,13 @@ export async function initAPI() {
       }
       const queryParams = new URLSearchParams(cleanParams).toString();
       const url = queryParams ? `${BASE_URL}/posts?${queryParams}` : `${BASE_URL}/posts`;
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url);
       if (!response.ok) throw new Error('Failed to fetch posts');
       return response.json();
     },
 
     getPost: async (postId) => {
-      const response = await fetch(`${BASE_URL}/posts/${postId}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/posts/${postId}`);
       if (!response.ok) throw new Error('Failed to fetch post');
       const data = await response.json();
       return data.post || data;
@@ -256,7 +294,7 @@ export async function initAPI() {
 
     // Scraping methods
     scrapeCompetitors: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/scrape`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scrape`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to start scraping');
@@ -270,7 +308,7 @@ export async function initAPI() {
     // are saved competitor by competitor, so partial progress is never lost.
     // onProgress(done, total, name) is optional (used for UI toasts).
     scrapeProjectSequentially: async (projectId, onProgress) => {
-      const listResponse = await fetch(`${BASE_URL}/projects/${projectId}/competitors`);
+      const listResponse = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/competitors`);
       if (!listResponse.ok) throw new Error('Failed to fetch competitors');
       const payload = await listResponse.json();
       const competitors = Array.isArray(payload) ? payload : (payload.competitors || []);
@@ -284,7 +322,7 @@ export async function initAPI() {
           onProgress(i + 1, targets.length, competitor.name);
         }
         try {
-          const response = await fetch(`${BASE_URL}/competitors/${competitor.id}/scrape`, {
+          const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitor.id}/scrape`, {
             method: 'POST'
           });
           if (!response.ok) {
@@ -301,7 +339,7 @@ export async function initAPI() {
     },
 
     scrapeCompetitor: async (competitorId) => {
-      const response = await fetch(`${BASE_URL}/competitors/${competitorId}/scrape`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitorId}/scrape`, {
         method: 'POST'
       });
       if (!response.ok) {
@@ -312,20 +350,20 @@ export async function initAPI() {
     },
 
     getScrapingLogs: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/scraping-logs`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scraping-logs`);
       if (!response.ok) throw new Error('Failed to fetch scraping logs');
       return response.json();
     },
 
     getScrapingStats: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/scraping-stats`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scraping-stats`);
       if (!response.ok) throw new Error('Failed to fetch scraping statistics');
       return response.json();
     },
 
     // AI Analysis methods
     analyzeProject: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/analyze`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/analyze`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to analyze project');
@@ -334,7 +372,7 @@ export async function initAPI() {
 
     // Content Generation methods
     generateIdeas: async (projectId, count = 5) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/ideas`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/ideas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count })
@@ -344,7 +382,7 @@ export async function initAPI() {
     },
 
     generateCompleteUpdate: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/complete-update`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/complete-update`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to generate complete update');
@@ -353,13 +391,13 @@ export async function initAPI() {
 
     // Generated Ideas methods
     getGeneratedIdeas: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/generated-ideas`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/generated-ideas`);
       if (!response.ok) throw new Error('Failed to fetch generated ideas');
       return response.json();
     },
 
     markIdeaUsed: async (ideaId) => {
-      const response = await fetch(`${BASE_URL}/generated-ideas/${ideaId}/use`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/generated-ideas/${ideaId}/use`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to mark idea as used');
@@ -368,19 +406,19 @@ export async function initAPI() {
 
     // Analytics & Market Intelligence methods (PDF Spec Compliance)
     getTopicFrequency: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/analytics/topics`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/analytics/topics`);
       if (!response.ok) throw new Error('Failed to fetch topic frequency');
       return response.json();
     },
 
     getKeywordFrequency: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/analytics/keywords`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/analytics/keywords`);
       if (!response.ok) throw new Error('Failed to fetch keyword frequency');
       return response.json();
     },
 
     getMarketOverview: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/market-overview`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/market-overview`);
       if (!response.ok) throw new Error('Failed to fetch market overview');
       return response.json();
     },
@@ -394,13 +432,13 @@ export async function initAPI() {
       }
       const queryParams = new URLSearchParams(cleanParams).toString();
       const url = queryParams ? `${BASE_URL}/projects/${projectId}/reviews?${queryParams}` : `${BASE_URL}/projects/${projectId}/reviews`;
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url);
       if (!response.ok) throw new Error('Failed to fetch project reviews');
       return response.json();
     },
 
     getReviewAnalytics: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/reviews/analytics`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/reviews/analytics`);
       if (!response.ok) throw new Error('Failed to fetch review analytics');
       return response.json();
     },
@@ -409,7 +447,7 @@ export async function initAPI() {
     autocompletePlaces: async (query, location) => {
       const params = new URLSearchParams({ q: query });
       if (location) params.append('location', location);
-      const response = await fetch(`${BASE_URL}/places/autocomplete?${params}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places/autocomplete?${params}`);
       if (!response.ok) throw new Error('Failed to autocomplete places');
       return response.json();
     },
@@ -418,13 +456,13 @@ export async function initAPI() {
       const params = new URLSearchParams();
       if (query) params.append('q', query);
       params.append('limit', String(limit));
-      const response = await fetch(`${BASE_URL}/places?${params}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places?${params}`);
       if (!response.ok) throw new Error('Failed to list places');
       return response.json();
     },
 
     searchPlaces: async (name, location, maxResults = 5) => {
-      const response = await fetch(`${BASE_URL}/places/search`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/places/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, location, max_results: maxResults })
@@ -445,32 +483,32 @@ export async function initAPI() {
     },
 
     getPlaceDetail: async (placeId) => {
-      const response = await fetch(`${BASE_URL}/places/${placeId}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places/${placeId}`);
       if (!response.ok) throw new Error('Failed to get place detail');
       return response.json();
     },
 
     getProjectPlaces: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/places`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/places`);
       if (!response.ok) throw new Error('Failed to get project places');
       return response.json();
     },
 
     getMarketGaps: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/market-gaps`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/market-gaps`);
       if (!response.ok) throw new Error('Failed to get market gaps');
       return response.json();
     },
 
     getTopicTrends: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/trend-analysis`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/trend-analysis`);
       if (!response.ok) throw new Error('Failed to get trend analysis');
       return response.json();
     },
 
     // Competitor verification
     verifyCompetitor: async (data) => {
-      const response = await fetch(`${BASE_URL}/competitors/verify`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/competitors/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -491,7 +529,7 @@ export async function initAPI() {
     autocompletePlaces: async (query, location) => {
       const params = new URLSearchParams({ q: query });
       if (location) params.append('location', location);
-      const response = await fetch(`${BASE_URL}/places/autocomplete?${params}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places/autocomplete?${params}`);
       if (!response.ok) throw new Error('Failed to autocomplete places');
       return response.json();
     },
@@ -500,13 +538,13 @@ export async function initAPI() {
       const params = new URLSearchParams();
       if (query) params.append('q', query);
       params.append('limit', String(limit));
-      const response = await fetch(`${BASE_URL}/places?${params}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places?${params}`);
       if (!response.ok) throw new Error('Failed to list places');
       return response.json();
     },
 
     resolvePlace: async (name, location, options = {}) => {
-      const response = await fetch(`${BASE_URL}/places/resolve`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/places/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, location, ...options })
@@ -526,20 +564,20 @@ export async function initAPI() {
     },
 
     getPlaceDetail: async (placeId) => {
-      const response = await fetch(`${BASE_URL}/places/${placeId}`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places/${placeId}`);
       if (!response.ok) throw new Error('Failed to get place detail');
       return response.json();
     },
 
     getProjectPlaces: async (projectId) => {
-      const response = await fetch(`${BASE_URL}/projects/${projectId}/places`);
+      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/places`);
       if (!response.ok) throw new Error('Failed to get project places');
       return response.json();
     },
 
     // Google Maps scraping diagnostics (Selenium / Chrome / reachability)
     getPlacesDiagnostics: async () => {
-      const response = await fetch(`${BASE_URL}/places/diagnostics`);
+      const response = await fetchWithTimeout(`${BASE_URL}/places/diagnostics`);
       if (!response.ok) throw new Error('Failed to read scraping diagnostics');
       return response.json();
     },

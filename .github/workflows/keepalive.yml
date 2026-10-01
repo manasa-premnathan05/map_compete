@@ -1,0 +1,34 @@
+name: keepalive
+
+# A free Render web service is suspended after a period of inactivity, and the
+# first request after that suspension is answered by the platform rather than by
+# the application - a browser can only observe that as a failed request (502),
+# which is what makes the interface show "API unreachable" on a fresh load.
+#
+# Pinging the health endpoint every ten minutes keeps the instance warm. GitHub
+# may delay scheduled runs under load, and disables schedules on a repository
+# with no activity for 60 days, so an uptime monitor (UptimeRobot, cron-job.org,
+# Better Stack) is a good complement or replacement.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the API health endpoint
+        run: |
+          url="https://map-compete.onrender.com/api/health"
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 60 "$url" || true)
+            echo "attempt $attempt -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              cat /tmp/health.json; echo; exit 0
+            fi
+            sleep 20
+          done
+          # Log the failure without failing the workflow: alerting belongs to a
+          # dedicated monitor, this job only has to keep the service awake.
+          echo "health endpoint did not answer 200 within the retry budget"

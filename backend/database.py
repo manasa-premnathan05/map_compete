@@ -260,6 +260,14 @@ class DatabaseManager:
         if self._db is None:
             return
         try:
+            # Every API route resolves documents by the small integer ``id``
+            # allocated from the counters collection, so those lookups have to
+            # be indexed - without this each one is a collection scan.
+            for collection in (self.places, self.competitors, self.posts,
+                               self.post_competitors, self.reviews, self.keywords,
+                               self.generated_ideas, self.scraping_logs):
+                collection.create_index([("id", ASCENDING)])
+
             self.places.create_index([("place_key", ASCENDING)], unique=True)
             self.places.create_index([("google_place_id", ASCENDING)])
             self.places.create_index([("hex_id", ASCENDING)])
@@ -272,6 +280,10 @@ class DatabaseManager:
             self.competitors.create_index([("business_key", ASCENDING)])
             self.competitors.create_index(
                 [("project_id", ASCENDING), ("place_id", ASCENDING)]
+            )
+            # Reverse order: used to count how many projects track a place.
+            self.competitors.create_index(
+                [("place_id", ASCENDING), ("project_id", ASCENDING)]
             )
 
             # Duplicate prevention: one document per source post / review.
@@ -287,6 +299,9 @@ class DatabaseManager:
             )
             self.post_competitors.create_index([("competitor_id", ASCENDING)])
             self.post_competitors.create_index([("post_id", ASCENDING)])
+            self.post_competitors.create_index(
+                [("competitor_id", ASCENDING), ("post_id", ASCENDING)]
+            )
 
             self.reviews.create_index([("content_hash", ASCENDING)], unique=True)
             self.reviews.create_index([("project_id", ASCENDING)])
@@ -295,6 +310,10 @@ class DatabaseManager:
             self.keywords.create_index([("project_id", ASCENDING)])
             self.generated_ideas.create_index([("project_id", ASCENDING)])
             self.scraping_logs.create_index([("project_id", ASCENDING)])
+            # Used by the "last scrape status" lookup on every project read.
+            self.scraping_logs.create_index(
+                [("project_id", ASCENDING), ("start_time", DESCENDING)]
+            )
 
             self._seed_counters()
         except PyMongoError as exc:
@@ -1075,18 +1094,52 @@ class DatabaseManager:
             doc["rating_distribution"] = json.dumps(doc["rating_distribution"])
         return doc
 
+    def posts_collected_counts(self, competitor_ids: List[int]) -> Dict[int, int]:
+        """Posts collected per competitor, in a fixed number of queries.
+
+        A competitor owns the posts stored under its own id plus the posts it
+        shares with another project (linked through ``post_competitors``).
+        Computing this per competitor issued one count query per competitor and
+        one lookup per shared link, which is what made the competitors endpoint
+        slow once a project had a real amount of content. Both parts are now
+        fetched in bulk and grouped in memory.
+        """
+        ids = [int(cid) for cid in competitor_ids if cid is not None]
+        counts: Dict[int, int] = {cid: 0 for cid in ids}
+        if not ids:
+            return counts
+
+        # 1. Posts stored against the competitor itself.
+        for row in self.posts.find({"competitor_id": {"$in": ids}},
+                                   {"competitor_id": 1}):
+            cid = row.get("competitor_id")
+            if cid in counts:
+                counts[cid] += 1
+
+        # 2. Posts another project links to this competitor. The links are read
+        #    in one query and the owning competitor of each linked post in a
+        #    second, so the cost does not grow with the number of links.
+        links = [
+            (row.get("competitor_id"), row.get("post_id"))
+            for row in self.post_competitors.find(
+                {"competitor_id": {"$in": ids}}, {"competitor_id": 1, "post_id": 1}
+            )
+        ]
+        if links:
+            post_ids = sorted({post_id for _, post_id in links if post_id is not None})
+            owners = {
+                row["id"]: row.get("competitor_id")
+                for row in self.posts.find({"id": {"$in": post_ids}},
+                                           {"id": 1, "competitor_id": 1})
+            }
+            for competitor_id, post_id in links:
+                if owners.get(post_id) != competitor_id:
+                    counts[competitor_id] = counts.get(competitor_id, 0) + 1
+        return counts
+
     def _posts_collected(self, competitor_id: int) -> int:
         """Own posts + shared posts another project links to this competitor."""
-        own = self.posts.count_documents({"competitor_id": competitor_id})
-        extra = 0
-        for link in self.post_competitors.find({"competitor_id": competitor_id},
-                                               {"post_id": 1}):
-            owner = self.posts.find_one(
-                {"id": link["post_id"]}, {"competitor_id": 1}
-            )
-            if owner and owner.get("competitor_id") != competitor_id:
-                extra += 1
-        return own + extra
+        return self.posts_collected_counts([competitor_id]).get(competitor_id, 0)
 
     def _last_scrape_status(self, project_id: int):
         """MAX(start_time) of the project's scraping logs (None when no run)."""
@@ -1113,20 +1166,32 @@ class DatabaseManager:
             for doc in self.competitors.find({"project_id": project_id})
         ]
 
-        # Shared counts: how many *projects* track each canonical place.
+        # Shared counts: how many *projects* track each canonical place. One
+        # pass over the competitors holding those places replaces a distinct()
+        # call per place; that pattern issued one round trip per place and was
+        # the main reason this endpoint took seconds on a small instance.
         place_ids = sorted({c.get("place_id") for c in competitors if c.get("place_id")})
         places: Dict[int, Dict] = {}
         shared: Dict[int, int] = {}
         if place_ids:
             for place_row in self.places.find({"id": {"$in": place_ids}}):
                 places[place_row["id"]] = self._place_dict(place_row)
-            for pid in place_ids:
-                shared[pid] = len(self.competitors.distinct("project_id", {"place_id": pid}))
+            project_sets: Dict[int, set] = {pid: set() for pid in place_ids}
+            for row in self.competitors.find(
+                {"place_id": {"$in": place_ids}}, {"place_id": 1, "project_id": 1}
+            ):
+                bucket = project_sets.get(row.get("place_id"))
+                if bucket is not None:
+                    bucket.add(row.get("project_id"))
+            shared = {pid: len(bucket) for pid, bucket in project_sets.items()}
 
         last_scrape = self._last_scrape_status(project_id)
+        # Batched: one pass instead of a posts count (plus one lookup per shared
+        # link) for every competitor.
+        post_counts = self.posts_collected_counts([c["id"] for c in competitors])
         for competitor in competitors:
             cid = competitor["id"]
-            competitor["posts_collected"] = self._posts_collected(cid)
+            competitor["posts_collected"] = post_counts.get(cid, 0)
             competitor["last_scrape_status"] = last_scrape
             place = places.get(competitor.get("place_id"))
             competitor["place"] = place

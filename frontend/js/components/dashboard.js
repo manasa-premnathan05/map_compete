@@ -93,10 +93,64 @@ export function initDashboard(api) {
 
   let currentProjectId = null;
 
+  // Project-list loading is the bootstrap of every view: if it fails, the whole
+  // application looks broken. A single failed attempt used to leave the
+  // "API unreachable" text on screen indefinitely because nothing re-requested
+  // it, so a ten-second platform restart (or a free-tier wake-up) looked like a
+  // permanent outage. The list is now retried with backoff, retried again
+  // whenever the tab becomes visible, and cleared automatically on the first
+  // success.
+  const PROJECT_RETRY_DELAYS = [500, 1500, 4000, 8000];
+  const RECOVER_POLL_MS = 20000;
+  const RECOVER_POLL_LIMIT = 15;   // roughly five minutes of background recovery
+  let projectRecoveryTimer = null;
+  let projectRecoveryAttempts = 0;
+  let projectLoadFailed = false;
+
+  function setProjectOptions(html) {
+    if (projectSelectEl) projectSelectEl.innerHTML = html;
+    const mobileSelectEl = document.getElementById('mobile-project-select');
+    if (mobileSelectEl) mobileSelectEl.innerHTML = html;
+  }
+
+  function stopProjectRecovery() {
+    if (projectRecoveryTimer) {
+      clearTimeout(projectRecoveryTimer);
+      projectRecoveryTimer = null;
+    }
+    projectRecoveryAttempts = 0;
+  }
+
+  function scheduleProjectRecovery() {
+    if (projectRecoveryTimer) {
+      clearTimeout(projectRecoveryTimer);
+    }
+    if (projectRecoveryAttempts >= RECOVER_POLL_LIMIT) {
+      console.warn('Stopped retrying the project list; use the project selector or reload to try again.');
+      return;
+    }
+    projectRecoveryAttempts += 1;
+    projectRecoveryTimer = setTimeout(async () => {
+      const projects = await loadProjects({ retries: [], silent: true });
+      if (projectLoadFailed) {
+        scheduleProjectRecovery();
+      } else if (projects.length) {
+        // Backend answered again: refill the dashboard for the restored project.
+        await loadDashboardData();
+      }
+    }, RECOVER_POLL_MS);
+  }
+
   // Initialize Dashboard
   async function init() {
     try {
-      await loadProjects();
+      const projects = await loadProjects();
+      if (!projects.length && projectLoadFailed) {
+        // Bootstrap failed: the recovery loop keeps trying in the background and
+        // refreshes the dashboard as soon as the backend answers again.
+        setupEventListeners();
+        return;
+      }
       await loadDashboardData();
       setupEventListeners();
     } catch (err) {
@@ -106,45 +160,76 @@ export function initDashboard(api) {
 
   // Load and populate project dropdown. Returns the project list so callers can
   // react to the resulting selection (e.g. after deleting the active project).
-  async function loadProjects() {
-    try {
-      const response = await api.getProjects();
-      const projects = response.projects || [];
-      const mobileProjectSelectEl = document.getElementById('mobile-project-select');
+  // `retries` are the delays applied after a failed attempt; a list request that
+  // is still refused after every delay reports the failure once.
+  async function loadProjects({ retries = PROJECT_RETRY_DELAYS, silent = false } = {}) {
+    const delays = [0, ...retries];
+    let lastError = null;
 
-      if (projects.length > 0) {
-        // Preserve the currently selected project when options are rebuilt
-        const previous = parseInt(projectSelectEl?.value, 10) || parseInt(mobileProjectSelectEl?.value, 10) || currentProjectId;
-        const stillExists = projects.some(p => p.id === previous);
-        const targetId = stillExists ? previous : projects[0].id;
-        const optionsHtml = projects.map(p => `
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (delays[attempt]) {
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      }
+      try {
+        const response = await api.getProjects();
+        const projects = response.projects || [];
+        const mobileProjectSelectEl = document.getElementById('mobile-project-select');
+
+        if (projects.length > 0) {
+          // Preserve the currently selected project when options are rebuilt
+          const previous = parseInt(projectSelectEl?.value, 10) || parseInt(mobileProjectSelectEl?.value, 10) || currentProjectId;
+          const stillExists = projects.some(p => p.id === previous);
+          const targetId = stillExists ? previous : projects[0].id;
+          const optionsHtml = projects.map(p => `
           <option value="${p.id}" ${p.id === targetId ? 'selected' : ''}>${p.name}</option>
         `).join('');
 
-        if (projectSelectEl) projectSelectEl.innerHTML = optionsHtml;
-        if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = optionsHtml;
-        currentProjectId = targetId;
-      } else {
-        // The last project is gone: drop the stale option instead of leaving a
-        // deleted company in the switcher.
-        if (projectSelectEl) projectSelectEl.innerHTML = '';
-        if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = '';
-        currentProjectId = null;
+          if (projectSelectEl) projectSelectEl.innerHTML = optionsHtml;
+          if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = optionsHtml;
+          currentProjectId = targetId;
+        } else {
+          // The last project is gone: drop the stale option instead of leaving a
+          // deleted company in the switcher.
+          if (projectSelectEl) projectSelectEl.innerHTML = '';
+          if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = '';
+          currentProjectId = null;
+        }
+
+        if (projectLoadFailed && !silent) {
+          window.showToast?.('Backend reachable again - project list refreshed.', 'success');
+        }
+        projectLoadFailed = false;
+        stopProjectRecovery();
+        return projects;
+      } catch (err) {
+        lastError = err;
+        if (attempt < delays.length - 1) {
+          console.warn(`Project list attempt ${attempt + 1} failed (${err.message}); retrying...`);
+        }
       }
-      return projects;
-    } catch (err) {
-      console.warn('Could not load projects for selector:', err);
-      // Never leave "Loading projects..." on screen forever: that hides the real
-      // reason (backend asleep, database unreachable) and looks like a frozen
-      // app. Say what happened and surface it as a toast as well.
-      const failureOption = '<option value="">API unreachable - check the backend</option>';
-      if (projectSelectEl) projectSelectEl.innerHTML = failureOption;
-      const mobileSelectEl = document.getElementById('mobile-project-select');
-      if (mobileSelectEl) mobileSelectEl.innerHTML = failureOption;
-      window.showToast?.(`Could not load projects: ${err.message}`, 'error');
-      return [];
     }
+
+    // Every attempt failed: say so once, then keep probing in the background.
+    projectLoadFailed = true;
+    setProjectOptions('<option value="">API unreachable - retrying...</option>');
+    if (!silent) {
+      window.showToast?.(`Could not load projects: ${lastError?.message || 'request failed'}`, 'error');
+    }
+    console.error('Project list unavailable after retries:', lastError);
+    scheduleProjectRecovery();
+    return [];
   }
+
+  // A hidden tab does not need to keep polling; a tab that becomes visible again
+  // is exactly the moment to re-check the backend.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && projectLoadFailed) {
+      stopProjectRecovery();
+      loadProjects({ retries: [0, 1500], silent: true }).then(projects => {
+        if (projects.length) loadDashboardData();
+      });
+    }
+  });
 
   // Resolve the project currently chosen in the header switcher. The dashboard
   // owns that switcher, but the other components start loading in parallel, so
