@@ -441,7 +441,7 @@ def _google_maps_reachable(timeout=6.0):
 
 @app.route('/api/places/resolve', methods=['POST'])
 def resolve_place():
-    """Resolve a typed business name to its real Google Maps listing.
+    """Resolve a business name or Google Maps URL to its real listing.
 
     Pass "live": true to run a real Google Maps lookup (slower, needs Chrome)
     so a hand-typed competitor can be promoted onto its canonical identity.
@@ -450,13 +450,19 @@ def resolve_place():
         data = request.get_json() or {}
         query = (data.get('name') or data.get('query') or '').strip()
         location = (data.get('location') or '').strip() or None
-        if not query:
-            return jsonify({"error": "A business name is required"}), 400
+        gmap_url = data.get('google_maps_url') or data.get('gmap_url')
+        if gmap_url:
+            try:
+                gmap_url = GoogleMapsScraper._validated_maps_url(gmap_url)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+        if not query and not gmap_url:
+            return jsonify({"error": "A business name or Google Maps URL is required"}), 400
 
         # Fast path: a URL or an id handed over by discovery resolves instantly.
         identity = db.resolve_place_identity(
             name=query,
-            gmap_url=data.get('google_maps_url') or data.get('gmap_url'),
+            gmap_url=gmap_url,
             address=data.get('address'),
             google_place_id=data.get('google_place_id'),
             cid=data.get('cid'),
@@ -471,11 +477,11 @@ def resolve_place():
                 "found": bool(identity['place_key']),
                 "live": False,
                 "identity": identity,
-                "message": "Pass live=true to look this name up on Google Maps",
+                "message": "Pass live=true to look this business up on Google Maps",
             })
 
         scraper = GoogleMapsScraper(headless=True)
-        live = scraper.resolve_place_identity(query, location=location)
+        live = scraper.resolve_place_identity(query, location=location, gmap_url=gmap_url)
         live_state = (live.get('state') or 'UNKNOWN') if isinstance(live, dict) else 'UNKNOWN'
         _remember_place_diagnostics('resolve', live_state, 1 if live.get('found') else 0)
         if live.get('found'):
@@ -1066,8 +1072,13 @@ def discover_project_competitors(project_id):
         own_place_id = (own_place or {}).get('id')
         own_place_key = (own_place or {}).get('place_key')
 
-        # Check if live Selenium Google Maps scrape should be attempted
+        # Check if live Selenium Google Maps scrape should be attempted.
+        # A live failure never aborts discovery (the AI providers still answer),
+        # but it is reported back so "discovery returned nothing" is never
+        # mistaken for "Google Maps has no such businesses".
         live_places = []
+        live_state = None
+        live_message = None
         if not is_online:
             try:
                 scraper = GoogleMapsScraper(headless=True)
@@ -1077,25 +1088,41 @@ def discover_project_competitors(project_id):
                     search_term, loc_term, max_results=5)
                 live_places = (outcome.get('results') or []) if isinstance(outcome, dict) \
                     else list(outcome or [])
+                live_state = (outcome or {}).get('state') if isinstance(outcome, dict) else None
+                live_message = (outcome or {}).get('message') if isinstance(outcome, dict) else None
                 logger.info("Live Google Maps scrape: state=%s places=%s",
-                            (outcome or {}).get('state') if isinstance(outcome, dict) else None,
-                            len(live_places))
+                            live_state, len(live_places))
+                if live_state not in ('RESULTS', 'NO_RESULTS'):
+                    logger.warning(
+                        "Live Google Maps discovery scrape could not read Maps "
+                        "(state=%s message=%s); continuing with AI discovery only",
+                        live_state, live_message)
                 _remember_place_diagnostics(
-                    'discover',
-                    (outcome or {}).get('state') if isinstance(outcome, dict) else None,
-                    len(live_places),
+                    'discover', live_state, len(live_places),
                     (outcome or {}).get('diagnostics') if isinstance(outcome, dict) else None)
             except Exception as ex:
+                live_state = 'BROWSER_ERROR'
+                live_message = str(ex)[:200]
                 logger.warning(f"Live scrape skipped/failed: {ex}")
 
-        # Call Smart AI Discovery as well
-        discovery_result = ai_service.discover_local_competitors(
-            query=company_name,
-            location=location,
-            field=field,
-            existing_competitors=existing_names,
-            is_online=is_online
-        )
+        # Call Smart AI Discovery as well. A provider outage must not throw away
+        # the live Google Maps rows already collected above, so it degrades to
+        # Maps-only discovery with the reason reported back to the caller.
+        ai_error = None
+        try:
+            discovery_result = ai_service.discover_local_competitors(
+                query=company_name,
+                location=location,
+                field=field,
+                existing_competitors=existing_names,
+                is_online=is_online
+            )
+        except Exception as ex:
+            ai_error = str(ex)[:200]
+            discovery_result = {}
+            logger.warning(
+                "AI competitor discovery failed (%s); continuing with the live "
+                "Google Maps rows only", ex)
 
         # Merge live places with AI discovery
         all_competitors = []
@@ -1174,6 +1201,10 @@ def discover_project_competitors(project_id):
             "is_online": is_online,
             "inferred_location": discovery_result.get('inferred_location', location or ('Nationwide / Online' if is_online else 'Local Area')),
             "inferred_field": discovery_result.get('inferred_field', field or ('E-commerce & Retail' if is_online else 'Business Services')),
+            "scrape_state": live_state,
+            "scrape_message": live_message if live_state not in ('RESULTS', 'NO_RESULTS') else None,
+            "live_places_found": len(live_places),
+            "ai_message": ai_error,
             "competitors": all_competitors
         })
     except Exception as e:
@@ -1270,7 +1301,7 @@ def scrape_single_competitor(competitor_id):
             if "CAPTCHA_REQUIRED" in error_str:
                 scrape_error = "CAPTCHA_REQUIRED: Google Maps requires manual verification"
                 scrape_status = "CAPTCHA_REQUIRED"
-            elif "TIMEOUT" in error_str:
+            elif "timeout" in error_str.lower() or "timed out" in error_str.lower():
                 scrape_error = "TIMEOUT: Google Maps page load timed out"
                 scrape_status = "TIMEOUT"
             else:

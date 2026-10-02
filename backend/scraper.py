@@ -109,6 +109,8 @@ class GoogleMapsScraper:
         credential-free reason is raised so callers can report BROWSER_ERROR.
         """
         chrome_options = Options()
+        # Maps fetches tiles long after its listing DOM becomes usable.
+        chrome_options.page_load_strategy = 'eager'
         if self.headless:
             chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
@@ -319,6 +321,55 @@ class GoogleMapsScraper:
         except Exception:
             pass
         return snapshot
+
+    @staticmethod
+    def _validated_maps_url(url: str) -> str:
+        """Accept public Google Maps links, not arbitrary browser targets."""
+        from urllib.parse import urlsplit, urlunsplit
+
+        raw = (url or '').strip()
+        if '://' not in raw:
+            raw = 'https://' + raw
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or '').lower()
+        google_host = bool(re.fullmatch(
+            r'(?:www\.|maps\.)?google\.(?:com|co\.in|co\.uk|com\.au|ca|de|fr|in|co\.jp)', host))
+        valid_path = google_host and (parsed.path == '/maps' or parsed.path.startswith('/maps/'))
+        short_link = (host == 'maps.app.goo.gl' and len(parsed.path) > 1) or (
+            host == 'goo.gl' and parsed.path.startswith('/maps/'))
+        if (parsed.scheme not in ('http', 'https') or parsed.username or parsed.password
+                or parsed.port not in (None, 80, 443) or not (valid_path or short_link)):
+            raise ValueError('Enter a valid Google Maps place, search, or share URL.')
+        return urlunsplit(('https', host, parsed.path, parsed.query, parsed.fragment))
+
+    def _navigate_maps(self, url: str) -> bool:
+        """Recover rendered DOM on timeout; other driver errors propagate."""
+        try:
+            self.driver.get(url)
+            return False
+        except TimeoutException:
+            logger.warning('Google Maps navigation timed out; inspecting rendered DOM')
+            try:
+                self.driver.execute_script('window.stop();')
+            except WebDriverException:
+                pass
+            return True
+
+    def _wait_for_maps_content(self, timeout: float = 15) -> Dict:
+        """Wait for a listing, result link, or terminal Google page state."""
+        deadline = time.monotonic() + timeout
+        while True:
+            state = self._detect_google_maps_page_state()
+            if state['state'] in ('NO_RESULTS', 'CAPTCHA', 'CONSENT', 'BLOCKED'):
+                return state
+            headings = self.driver.find_elements(By.TAG_NAME, 'h1')
+            if (any((heading.text or '').strip().lower() not in ('', 'results', 'google maps')
+                    for heading in headings)
+                    or self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/maps/place/']")):
+                return state
+            if time.monotonic() >= deadline:
+                return state
+            time.sleep(0.4)
 
     def _detect_google_maps_page_state(self, snapshot: Optional[Dict] = None,
                                        result_cards: int = 0,
@@ -535,6 +586,7 @@ class GoogleMapsScraper:
         except Exception as exc:
             diagnostics['error_type'] = type(exc).__name__
             diagnostics['error'] = str(exc)[:300]
+            self.close_driver()
             return finish('BROWSER_ERROR',
                           'The server could not start a browser to reach Google Maps.')
 
@@ -543,37 +595,18 @@ class GoogleMapsScraper:
                 return finish('BROWSER_ERROR',
                               'The browser session could not be created.')
 
-            navigation_timed_out = False
+            # `_navigate_maps` keeps the session alive after a navigation
+            # timeout (Maps often renders useful DOM first) and reports it.
             try:
-                self.driver.get(search_url)
-            except TimeoutException as exc:
-                # Selenium can time out after useful Maps DOM has already rendered.
-                # Keep the session alive and inspect the DOM before declaring failure.
-                navigation_timed_out = True
-                diagnostics['error_type'] = 'TimeoutException'
-                diagnostics['error'] = str(exc)[:300]
-                logger.warning("Google Maps navigation timed out; inspecting rendered DOM")
+                navigation_timed_out = self._navigate_maps(search_url)
             except WebDriverException as exc:
                 diagnostics['error_type'] = type(exc).__name__
                 diagnostics['error'] = str(exc)[:300]
                 return finish('BROWSER_ERROR',
                               'Google Maps could not be loaded by the server.')
-            # Explicit waits: page content first, then the result list. Bounded
-            # so a Render Free request never hangs indefinitely.
-            deadline = time.time() + 15
-            while time.time() < deadline:
-                snapshot = self._page_snapshot()
-                if (snapshot.get('body_text') or '').strip() or (snapshot.get('title') or '').strip():
-                    break
-                time.sleep(0.4)
-
-            while time.time() < deadline:
-                if self._count_result_cards():
-                    break
-                if self._detect_google_maps_page_state()['state'] in (
-                        'NO_RESULTS', 'CAPTCHA', 'CONSENT', 'BLOCKED'):
-                    break
-                time.sleep(0.5)
+            # Explicit wait for rendered content, bounded so a Render Free
+            # request never hangs indefinitely.
+            self._wait_for_maps_content()
 
             results, counters = self._collect_results(max_results)
             diagnostics.update(counters)
@@ -975,12 +1008,19 @@ class GoogleMapsScraper:
             "longitude": identity["longitude"],
         }
 
-    def resolve_place_identity(self, query: str, location: str = None) -> Dict:
+    def resolve_place_identity(self, query: str, location: str = None,
+                               gmap_url: str = None) -> Dict:
         """Live Google Maps lookup: resolve a typed business name to one place.
 
         Used to promote a manually entered competitor (a name, maybe an
         address) onto its real Google Maps listing, so that the manual entry
         and the discovered entry collapse onto the same canonical business.
+
+        ``gmap_url`` lets a caller hand over the exact listing the user pasted
+        (a share link, a search link, or a full ``/maps/place/`` URL) instead of
+        re-searching by name. An invalid / non-Maps URL raises ``ValueError``
+        *before* a browser is started, so this method never navigates to an
+        arbitrary target.
         """
         import urllib.parse
         import re
@@ -1001,7 +1041,7 @@ class GoogleMapsScraper:
             "opening_hours": None,
             "status": None,
         }
-        if not clean_query:
+        if not clean_query and not gmap_url:
             result["message"] = "A business name is required"
             return result
 
@@ -1009,6 +1049,8 @@ class GoogleMapsScraper:
         if location and location.lower() not in clean_query.lower():
             full_query = f"{clean_query} {location}".strip()
         search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(full_query)}"
+        if gmap_url:
+            search_url = self._validated_maps_url(gmap_url)
 
         try:
             try:
@@ -1020,14 +1062,8 @@ class GoogleMapsScraper:
                 logger.warning("Place resolution driver failure: %s", exc)
                 return result
 
-            navigation_timed_out = False
             try:
-                self.driver.get(search_url)
-            except TimeoutException:
-                # A useful Maps profile can be rendered even when Selenium's
-                # navigation timer expires. Continue and inspect the DOM.
-                navigation_timed_out = True
-                logger.warning("Place resolution navigation timed out; inspecting rendered DOM")
+                navigation_timed_out = self._navigate_maps(search_url)
             except WebDriverException as exc:
                 result["state"] = "BROWSER_ERROR"
                 result["message"] = "Google Maps could not be loaded by the server."
@@ -1035,13 +1071,7 @@ class GoogleMapsScraper:
                 return result
 
             # Bounded readiness wait instead of a blind sleep.
-            deadline = time.time() + 15
-            while time.time() < deadline:
-                snapshot = self._page_snapshot()
-                if ((snapshot.get("body_text") or "").strip()
-                        or (snapshot.get("title") or "").strip()):
-                    break
-                time.sleep(0.4)
+            self._wait_for_maps_content()
 
             # A challenge / consent / block is a scraper problem, never a
             # "this business does not exist" answer.
@@ -1387,10 +1417,19 @@ class GoogleMapsScraper:
         posts = []
         try:
             logger.info(f"Scraping posts for {competitor_name} at {gmap_url} (window: {window_days} days)")
-            self.driver.get(gmap_url)
+            navigation_timed_out = self._navigate_maps(gmap_url)
 
             # Wait for page to load
-            time.sleep(3)
+            page_state = self._wait_for_maps_content(timeout=25)
+            if page_state['state'] in ('ERROR', 'UNKNOWN'):
+                # One bounded retry in the SAME browser; never allocate a
+                # second Chromium tree on the 512 MB instance.
+                navigation_timed_out = self._navigate_maps(gmap_url)
+                page_state = self._wait_for_maps_content(timeout=25)
+            if page_state['state'] in ('CONSENT', 'BLOCKED', 'ERROR', 'UNKNOWN'):
+                if navigation_timed_out:
+                    raise TimeoutException('Google Maps did not render usable content')
+                raise WebDriverException(page_state.get('message'))
 
             # Check for CAPTCHA
             if self.handle_captcha():
@@ -1411,8 +1450,8 @@ class GoogleMapsScraper:
                     for link in place_links:
                         href = link.get_attribute('href') or ''
                         if '/maps/place/' in href:
-                            self.driver.get(href)
-                            time.sleep(4)
+                            self._navigate_maps(href)
+                            self._wait_for_maps_content()
                             logger.info(f"Opened place page for {competitor_name}")
                             break
             except Exception as nav_error:
@@ -1524,10 +1563,12 @@ class GoogleMapsScraper:
 
         except Exception as e:
             error_msg = str(e)
+            diagnostics['error_message'] = error_msg[:300]
+            self.last_run_diagnostics[competitor_name] = diagnostics
             if "CAPTCHA_REQUIRED" in error_msg:
                 diagnostics['scrape_status'] = 'CAPTCHA_REQUIRED'
                 raise Exception("CAPTCHA_REQUIRED")
-            elif "TIMEOUT" in error_msg.lower() or isinstance(e, TimeoutException):
+            elif "timeout" in error_msg.lower() or isinstance(e, TimeoutException):
                 diagnostics['scrape_status'] = 'TIMEOUT'
                 raise Exception("TIMEOUT")
             else:

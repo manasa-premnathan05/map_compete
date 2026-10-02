@@ -56,7 +56,21 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = null) {
     budget
   );
   try {
-    return await callFetch(url, { ...options, signal: controller.signal });
+    const requestOptions = { ...options, signal: controller.signal };
+    const canBypassProxy = isRead && String(url).startsWith('/api/');
+    let response;
+    try {
+      response = await callFetch(url, requestOptions);
+    } catch (error) {
+      if (!canBypassProxy || controller.signal.aborted) throw error;
+      return await callFetch(`${DEPLOYED_API_BASE}${String(url).slice(4)}`, requestOptions);
+    }
+    // Vercel can time out before a sleeping Render instance finishes booting.
+    // Only retry reads; replaying writes could create duplicate data.
+    if (canBypassProxy && [502, 503, 504].includes(response.status)) {
+      return await callFetch(`${DEPLOYED_API_BASE}${String(url).slice(4)}`, requestOptions);
+    }
+    return response;
   } finally {
     clearTimeout(timer);
   }
@@ -148,19 +162,60 @@ async function resolveApiBaseURL() {
 
 export async function initAPI() {
   const BASE_URL = await resolveApiBaseURL(); // Backend API URL
+  let projectsRequest = null;
+  let scrapeQueue = Promise.resolve();
+  const scrapeRequests = new Map();
+  const SCRAPE_BASE = BASE_URL === '/api' ? DEPLOYED_API_BASE : BASE_URL;
+
+  function enqueueScrape(path) {
+    if (scrapeRequests.has(path)) return scrapeRequests.get(path);
+    const job = scrapeQueue.catch(() => {}).then(async () => {
+      for (let attempt = 0; attempt < 13; attempt += 1) {
+        const response = await fetchWithTimeout(`${SCRAPE_BASE}${path}`, { method: 'POST' });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok) return payload;
+        if (response.status === 429 && payload.error_type === 'SCRAPER_BUSY' && attempt < 12) {
+          await new Promise((resolve) => setTimeout(resolve, 10000));
+          continue;
+        }
+        const error = new Error(payload.error || `Scraping failed (HTTP ${response.status})`);
+        error.status = response.status;
+        error.errorType = payload.error_type;
+        throw error;
+      }
+    });
+    scrapeQueue = job;
+    const tracked = job.finally(() => scrapeRequests.delete(path));
+    scrapeRequests.set(path, tracked);
+    return tracked;
+  }
+
+  async function loadProjects() {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const response = await fetchWithTimeout(`${BASE_URL}/projects`, { cache: 'no-store' }, LIST_TIMEOUT_MS);
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const error = new Error(payload.error || `Failed to fetch projects (HTTP ${response.status})`);
+          error.status = response.status;
+          throw error;
+        }
+        return await response.json();
+      } catch (error) {
+        if (attempt === 3 || (error.status && ![502, 503, 504].includes(error.status))) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      }
+    }
+  }
 
   return {
     // Project methods
     getProjects: async () => {
-      // List reads must fail fast so the caller can retry quickly: a platform
-      // proxy (502/504) or a stalled request is surfaced within seconds.
-      const response = await fetchWithTimeout(`${BASE_URL}/projects`, {}, LIST_TIMEOUT_MS);
-      if (!response.ok) {
-        const error = new Error(`Failed to fetch projects (HTTP ${response.status})`);
-        error.status = response.status;
-        throw error;
+      // Share one bounded cold-start recovery across concurrent UI callers.
+      if (!projectsRequest) {
+        projectsRequest = loadProjects().finally(() => { projectsRequest = null; });
       }
-      return response.json();
+      return projectsRequest;
     },
 
     createProject: async (projectData) => {
@@ -239,8 +294,14 @@ export async function initAPI() {
         body: JSON.stringify(discoveryData || {})
       });
       if (!response.ok) {
+        // Preserve the backend's real reason (SCRAPER_BUSY / MONGODB / ...)
+        // instead of collapsing everything into one generic message.
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to discover competitors');
+        const error = new Error(err.error || err.message || 'Failed to discover competitors');
+        error.status = response.status;
+        error.errorType = err.error_type || 'UNKNOWN';
+        error.payload = err;
+        throw error;
       }
       return response.json();
     },
@@ -294,11 +355,7 @@ export async function initAPI() {
 
     // Scraping methods
     scrapeCompetitors: async (projectId) => {
-      const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/scrape`, {
-        method: 'POST'
-      });
-      if (!response.ok) throw new Error('Failed to start scraping');
-      return response.json();
+      return enqueueScrape(`/projects/${projectId}/scrape`);
     },
 
     // Scrape every competitor of a project ONE BY ONE via the existing
@@ -322,12 +379,9 @@ export async function initAPI() {
           onProgress(i + 1, targets.length, competitor.name);
         }
         try {
-          const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitor.id}/scrape`, {
-            method: 'POST'
-          });
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${response.status}`);
+          const result = await enqueueScrape(`/competitors/${competitor.id}/scrape`);
+          if (result.error || !['SUCCESS', 'NO_POSTS'].includes(result.scrape_status)) {
+            throw new Error(result.error || result.scrape_status || 'Scrape did not complete');
           }
           succeeded += 1;
         } catch (err) {
@@ -339,14 +393,7 @@ export async function initAPI() {
     },
 
     scrapeCompetitor: async (competitorId) => {
-      const response = await fetchWithTimeout(`${BASE_URL}/competitors/${competitorId}/scrape`, {
-        method: 'POST'
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to scrape competitor');
-      }
-      return response.json();
+      return enqueueScrape(`/competitors/${competitorId}/scrape`);
     },
 
     getScrapingLogs: async (projectId, { includeStats = true } = {}) => {

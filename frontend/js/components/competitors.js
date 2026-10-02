@@ -341,7 +341,20 @@ export function initCompetitors(api) {
       lastDiscoveredCompetitors = result.competitors || [];
       renderDiscoveryResults(result);
 
-      window.showToast?.(`Discovered ${lastDiscoveredCompetitors.length} competitors!`, 'success');
+      if (lastDiscoveredCompetitors.length) {
+        window.showToast?.(`Discovered ${lastDiscoveredCompetitors.length} competitors!`, 'success');
+      } else {
+        window.showToast?.('No competitors found. Try a different location or industry.', 'warning');
+      }
+
+      // The live Google Maps crawl and the AI providers can fail independently.
+      // Say so explicitly instead of letting a Maps failure look like "none exist".
+      if (result.scrape_message) {
+        window.showToast?.(`Google Maps live search unavailable: ${result.scrape_message}`, 'warning');
+      }
+      if (result.ai_message) {
+        window.showToast?.(`AI discovery unavailable: ${result.ai_message}`, 'warning');
+      }
     } catch (err) {
       console.error('Error during competitor discovery:', err);
       window.showToast?.(`Discovery error: ${err.message}`, 'error');
