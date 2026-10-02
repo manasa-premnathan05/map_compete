@@ -6,6 +6,55 @@ from scraper import GoogleMapsScraper
 
 
 class ScraperMemoryTests(unittest.TestCase):
+    def test_max_branch_alias_is_verified_without_accepting_other_branches(self):
+        scraper = GoogleMapsScraper()
+        self.assertTrue(scraper._listing_names_match(
+            'Max - Nexus Seawoods Mall', 'Max Fashion - Nexus Seawoods'))
+        self.assertFalse(scraper._listing_names_match('Zudio', 'Zudio - Nexus Seawoods'))
+        for found in ('Max - Nexus Kharghar Mall', 'Other Fashion - Nexus Seawoods',
+                      'Max - Nexus Mall', 'The Brew Zone'):
+            self.assertFalse(scraper._listing_names_match(found, 'Max Fashion - Nexus Seawoods'))
+        self.assertFalse(scraper._listing_names_match('The Brew Zone', 'The Brew'))
+
+    def test_listing_on_search_url_keeps_verified_posts(self):
+        scraper = GoogleMapsScraper()
+        scraper.driver = Mock()
+        scraper.driver.current_url = 'https://www.google.com/maps/search/?api=1&query=Max'
+        heading = Mock()
+        heading.text = 'Max - Nexus Seawoods Mall'
+        scraper.driver.find_elements.side_effect = lambda by, selector: [] if selector.startswith('a[') else [heading]
+        post = {'text_content': 'Our new collection is here', 'post_source': 'owner'}
+        with patch.object(scraper, '_navigate_maps'), \
+                patch.object(scraper, '_wait_for_maps_content', return_value={'state': 'PLACE_PROFILE'}), \
+                patch.object(scraper, 'handle_captcha', return_value=False), \
+                patch.object(scraper, '_read_current_place_profile', return_value={
+                    'name': heading.text, 'review_count': 10}), \
+                patch.object(scraper, '_find_posts_section', return_value=object()), \
+                patch.object(scraper, '_extract_posts_from_section', return_value=[post]):
+            posts = scraper.scrape_competitor_posts(
+                'Max Fashion - Nexus Seawoods', scraper.driver.current_url, include_public=False)
+        self.assertEqual(posts, [post])
+        self.assertTrue(scraper.last_run_diagnostics['Max Fashion - Nexus Seawoods']['business_verified'])
+        scraper.close_driver()
+
+    def test_wrong_listing_is_not_extracted(self):
+        scraper = GoogleMapsScraper()
+        scraper.driver = Mock()
+        scraper.driver.current_url = 'https://www.google.com/maps/place/Other'
+        heading = Mock()
+        heading.text = 'Other Fashion'
+        scraper.driver.find_elements.return_value = [heading]
+        with patch.object(scraper, '_navigate_maps'), \
+                patch.object(scraper, '_wait_for_maps_content', return_value={'state': 'PLACE_PROFILE'}), \
+                patch.object(scraper, 'handle_captcha', return_value=False), \
+                patch.object(scraper, '_read_current_place_profile', return_value={'review_count': 1}), \
+                patch.object(scraper, '_find_posts_section') as extract:
+            self.assertEqual(scraper.scrape_competitor_posts(
+                'Max Fashion - Nexus Seawoods', scraper.driver.current_url), [])
+            extract.assert_not_called()
+        self.assertEqual(scraper.last_run_diagnostics['Max Fashion - Nexus Seawoods']['scrape_status'], 'BUSINESS_MISMATCH')
+        scraper.close_driver()
+
     def test_unrendered_listing_retries_once_without_new_browser(self):
         scraper = GoogleMapsScraper()
         scraper.driver = Mock()

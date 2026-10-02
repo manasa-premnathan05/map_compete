@@ -1117,7 +1117,6 @@ export function initDashboard(api) {
       await dashboardReload.reload();
     };
     document.addEventListener('competitor-added', refreshOnCompetitorChange);
-    document.addEventListener('competitor-updated', refreshOnCompetitorChange);
 
     // NEW: Scope toggle buttons for new project modal
     // Scope picker shared by the Create and Edit project modals: the radio
@@ -1442,6 +1441,7 @@ export function initDashboard(api) {
           window.showToast?.(`Competitor updates successfully refreshed! (${summary.succeeded}/${summary.total} scraped)`, 'success');
         }
         await dashboardReload.reload();
+        document.dispatchEvent(new CustomEvent('scrape-completed', { detail: { projectId } }));
       } catch (err) {
         console.error('Quick scrape failed:', err);
         window.showToast?.(`Crawl failed: ${err.message}`, 'error');

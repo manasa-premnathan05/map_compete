@@ -1316,6 +1316,9 @@ def scrape_single_competitor(competitor_id):
         # page verified as this business contributes posts/reviews/stats.
         diag = (getattr(scraper, 'last_run_diagnostics', {}) or {}).get(competitor['name']) or {}
         business_verified = bool(diag.get('business_verified'))
+        if not scrape_error and not business_verified:
+            scrape_status = diag.get('scrape_status') or 'BUSINESS_MISMATCH'
+            scrape_error = diag.get('error_message') or 'Opened listing could not be verified as this business'
 
         new_posts = 0
         duplicates = 0
@@ -1336,6 +1339,10 @@ def scrape_single_competitor(competitor_id):
                 new_posts += 1
             else:
                 duplicates += 1  # Already collected (possibly via another project)
+
+        # Report only verified, eligible posts, not discarded extraction candidates.
+        posts = [post for post in posts or []
+                 if business_verified and not looks_like_place_card(post.get('text_content'))]
 
         # Determine final scrape status
         if scrape_status == "SUCCESS" and not scrape_error:
@@ -1705,6 +1712,9 @@ def scrape_competitors(project_id):
             # when the opened page was verified as this business.
             detail = dict(run_diagnostics.get(competitor_name) or {})
             business_verified = bool(detail.get("business_verified"))
+            if not business_verified and not detail.get('error'):
+                detail['status'] = detail.get('scrape_status') or 'BUSINESS_MISMATCH'
+                detail['error'] = detail.get('error_message') or 'Opened listing could not be verified as this business'
 
             for post_data in posts:
                 # Add competitor info to post data
@@ -1739,6 +1749,13 @@ def scrape_competitors(project_id):
             # Requirement 21: persist the per-competitor statistics of this run.
             detail.setdefault("competitor", competitor_name)
             detail.setdefault("gmap_url", competitor_obj.get("gmap_url"))
+            eligible_posts = [post for post in posts
+                              if business_verified and not looks_like_place_card(post.get('text_content'))]
+            total_posts_found -= posts_found - len(eligible_posts)
+            total_images -= images_found - sum(len(post.get('image_urls') or []) for post in eligible_posts)
+            posts = eligible_posts
+            posts_found = len(posts)
+            images_found = sum(len(post.get('image_urls') or []) for post in posts)
             detail["posts_found"] = posts_found
             detail["new_posts"] = new_posts_for_competitor
             detail["duplicates_skipped"] = duplicates_for_competitor

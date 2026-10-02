@@ -90,5 +90,15 @@ export function createProjectReloader({ tab, reload }) {
     if (stale) run();
   });
 
+  document.addEventListener('competitor-updated', (event) => {
+    if (event.detail?.projectId && Number(event.detail.projectId) !== readActiveProjectId()) return;
+    run();
+  });
+
+  document.addEventListener('scrape-completed', (event) => {
+    if (event.detail?.projectId && Number(event.detail.projectId) !== readActiveProjectId()) return;
+    run();
+  });
+
   return { reload: run };
 }

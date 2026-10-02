@@ -1460,6 +1460,13 @@ class GoogleMapsScraper:
             # Still on the result list? Then nothing on screen belongs to this
             # business, so no profile/posts are taken from it.
             still_on_list = '/maps/search/' in (self.driver.current_url or '')
+            # Maps can render a complete listing without changing /maps/search/.
+            if still_on_list:
+                headings = self.driver.find_elements(By.TAG_NAME, 'h1')
+                still_on_list = not any(
+                    (el.text or '').strip().lower() not in ('', 'results', 'google maps')
+                    for el in headings
+                )
 
             # Capture the Google Maps profile statistics while the place page
             # is open (rating / review count / star distribution / address).
@@ -1502,7 +1509,8 @@ class GoogleMapsScraper:
                         expected_address, profile.get('address')
                     )
                 verified = False
-                logger.warning(f"Business verification failed for {competitor_name} - continuing anyway")
+                diagnostics['error_message'] = 'Opened listing does not match the tracked business'
+                logger.warning(f"Business verification failed for {competitor_name}")
 
             # Keep the profile only when the opened page really is this
             # business: a maps/search/ URL can land on a different listing
@@ -1516,11 +1524,10 @@ class GoogleMapsScraper:
                     'result list page' if still_on_list else 'business name mismatch'
                 )
 
-            if still_on_list:
+            if not verified:
                 # Nothing below belongs to this business: return empty rather
                 # than store other listings' posts/reviews as our data.
                 diagnostics['posts_extracted'] = 0
-                diagnostics['scrape_status'] = 'NO_POSTS'
                 logger.info(f"Skipped scraping {competitor_name}: no place page opened")
                 self.last_run_diagnostics[competitor_name] = diagnostics
                 return []
@@ -1578,6 +1585,10 @@ class GoogleMapsScraper:
                 raise Exception(f"SCRAPER_ERROR: {error_msg}")
 
         diagnostics['posts_extracted'] = len(posts)
+        if posts:
+            diagnostics['scrape_status'] = 'SUCCESS'
+        elif diagnostics['scrape_status'] == 'UNKNOWN':
+            diagnostics['scrape_status'] = 'NO_POSTS'
         diagnostics['owner_posts'] = sum(
             1 for post in posts if (post or {}).get('post_source') != 'public'
         )
@@ -1846,7 +1857,7 @@ class GoogleMapsScraper:
                     elements = self.driver.find_elements(By.XPATH, selector)
                     for el in elements:
                         text = (el.text or '').strip()
-                        if text and self._names_match(text, expected_name):
+                        if text and self._listing_names_match(text, expected_name):
                             logger.info(f"Business verified: found '{text}' matches expected '{expected_name}'")
                             return True
                 except:
@@ -1859,6 +1870,27 @@ class GoogleMapsScraper:
         except Exception as e:
             logger.error(f"Error verifying business page: {e}")
             return False
+
+    def _listing_names_match(self, found_name: str, expected_name: str) -> bool:
+        """Accept a brand alias only with the same explicitly named branch."""
+        if self._names_match(found_name, expected_name):
+            return True
+        found_parts = re.split(r'\s+[-–—]\s+', found_name, maxsplit=1)
+        expected_parts = re.split(r'\s+[-–—]\s+', expected_name, maxsplit=1)
+        if len(expected_parts) != 2:
+            return False
+        normalize = lambda value: ' '.join(re.findall(r'[a-z0-9]+', value.lower()))
+        aliases = {'max fashion': 'max'}
+        found_brand = aliases.get(normalize(found_parts[0]), normalize(found_parts[0]))
+        expected_brand = aliases.get(normalize(expected_parts[0]), normalize(expected_parts[0]))
+        if not self._names_match(found_brand, expected_brand):
+            return False
+        # A shared city, 'Nexus', or 'Mall' alone cannot identify a branch.
+        generic = {'nexus', 'mall', 'malls', 'grand', 'central', 'center', 'centre',
+                   'the', 'at', 'in', 'mumbai', 'navi', 'india', 'fashion'}
+        branch = set(normalize(expected_parts[1]).split()) - generic
+        found_branch = set(normalize(' '.join(found_parts[1:])).split()) - generic
+        return bool(branch) and branch.issubset(found_branch)
 
     def _names_match(self, found_name: str, expected_name: str) -> bool:
         """Compare business names with conservative fuzzy matching.
