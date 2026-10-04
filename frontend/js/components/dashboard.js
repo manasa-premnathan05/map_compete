@@ -108,12 +108,17 @@ export function initDashboard(api) {
   // permanent outage. The list is now retried with backoff, retried again
   // whenever the tab becomes visible, and cleared automatically on the first
   // success.
-  const PROJECT_RETRY_DELAYS = [500, 1500, 4000, 8000];
+  // The API layer already retries a cold start with a generous budget, so the
+  // outer ladder only has to cover a platform restart: a long ladder here used
+  // to multiply the inner retries into minutes of "Loading projects...".
+  const PROJECT_RETRY_DELAYS = [1500, 4000];
   const RECOVER_POLL_MS = 20000;
   const RECOVER_POLL_LIMIT = 15;   // roughly five minutes of background recovery
   let projectRecoveryTimer = null;
   let projectRecoveryAttempts = 0;
+  let projectRecoveryRunning = false;
   let projectLoadFailed = false;
+  const BOOT_PLACEHOLDER = '<option value="">Connecting to the backend...</option>';
 
   function setProjectOptions(html) {
     if (projectSelectEl) projectSelectEl.innerHTML = html;
@@ -139,12 +144,24 @@ export function initDashboard(api) {
     }
     projectRecoveryAttempts += 1;
     projectRecoveryTimer = setTimeout(async () => {
-      const projects = await loadProjects({ retries: [], silent: true });
-      if (projectLoadFailed) {
+      // A tick must never start a second chain while the previous one is still
+      // waiting on the booting instance: overlapping chains used to pile several
+      // retry ladders onto a single-worker backend, which prolonged the boot.
+      if (projectRecoveryRunning) {
         scheduleProjectRecovery();
-      } else if (projects.length) {
-        // Backend answered again: refill the dashboard for the restored project.
-        dashboardReload.reload();
+        return;
+      }
+      projectRecoveryRunning = true;
+      try {
+        const projects = await loadProjects({ retries: [], silent: true });
+        if (projectLoadFailed) {
+          scheduleProjectRecovery();
+        } else if (projects.length) {
+          // Backend answered again: refill the dashboard for the restored project.
+          dashboardReload.reload();
+        }
+      } finally {
+        projectRecoveryRunning = false;
       }
     }, RECOVER_POLL_MS);
   }
@@ -213,6 +230,9 @@ export function initDashboard(api) {
 
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       if (delays[attempt]) {
+        // Waiting on the backend again: say what is happening instead of leaving
+        // a bare "Loading projects..." on screen for the whole boot/restart.
+        if (!projectSelectEl?.value) setProjectOptions(BOOT_PLACEHOLDER);
         await new Promise(resolve => setTimeout(resolve, delays[attempt]));
       }
       try {
@@ -256,7 +276,7 @@ export function initDashboard(api) {
 
     // Every attempt failed: say so once, then keep probing in the background.
     projectLoadFailed = true;
-    setProjectOptions('<option value="">API unreachable - retrying...</option>');
+    setProjectOptions('<option value="">Backend unreachable - retrying in the background...</option>');
     if (!silent) {
       window.showToast?.(`Could not load projects: ${lastError?.message || 'request failed'}`, 'error');
     }

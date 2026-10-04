@@ -36,6 +36,11 @@ const LOCAL_API_CANDIDATES = [
 // minutes (collection, generation) than for list reads.
 const DEFAULT_TIMEOUT_MS = 300000;   // 5 minutes - one collection run
 const LIST_TIMEOUT_MS = 20000;       // list and detail reads answer in milliseconds
+// A suspended free-tier instance boots *while* the first request waits, so that
+// one read legitimately takes tens of seconds. Budgeting it like a normal list
+// read aborted the request mid-boot and every retry then fought the same boot,
+// which is what left "Loading projects..." on screen for minutes.
+const COLD_START_TIMEOUT_MS = 60000;
 
 function callFetch(url, options) {
   // Indirection so a wrapper (or a test) can replace globalThis.fetch.
@@ -191,9 +196,15 @@ export async function initAPI() {
   }
 
   async function loadProjects() {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // The first read of a session may be answered by an instance that has to
+    // boot first: give that attempt the cold-start budget. Later attempts are
+    // real failures, so they keep the fast list budget and report quickly.
+    const budgets = [COLD_START_TIMEOUT_MS, LIST_TIMEOUT_MS, LIST_TIMEOUT_MS];
+    for (let attempt = 0; attempt < budgets.length; attempt += 1) {
       try {
-        const response = await fetchWithTimeout(`${BASE_URL}/projects`, { cache: 'no-store' }, LIST_TIMEOUT_MS);
+        const response = await fetchWithTimeout(
+          `${BASE_URL}/projects`, { cache: 'no-store' }, budgets[attempt]
+        );
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           const error = new Error(payload.error || `Failed to fetch projects (HTTP ${response.status})`);
@@ -202,7 +213,8 @@ export async function initAPI() {
         }
         return await response.json();
       } catch (error) {
-        if (attempt === 3 || (error.status && ![502, 503, 504].includes(error.status))) throw error;
+        if (attempt === budgets.length - 1
+          || (error.status && ![502, 503, 504].includes(error.status))) throw error;
         await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
       }
     }

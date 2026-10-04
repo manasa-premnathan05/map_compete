@@ -118,6 +118,20 @@ def _handle_database_unavailable(exc):
     return jsonify({"error": str(exc)}), 503
 
 
+@app.after_request
+def _api_responses_are_never_cached(response):
+    """API payloads are live data, so a browser or proxy must not replay them.
+
+    A stale project list (one company that existed earlier) or an old KPI figure
+    served from a cache is indistinguishable from a broken app, and the platform
+    adds its own caching headers, so the decision is made here.
+    """
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.before_request
 def _require_database():
     """Central guard: data endpoints fail fast with 503 when MongoDB is not

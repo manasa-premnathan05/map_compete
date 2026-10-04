@@ -5,13 +5,14 @@ name: keepalive
 # the application - a browser can only observe that as a failed request (502),
 # which is what makes the interface show "API unreachable" on a fresh load.
 #
-# Pinging the health endpoint every ten minutes keeps the instance warm. GitHub
-# may delay scheduled runs under load, and disables schedules on a repository
-# with no activity for 60 days, so an uptime monitor (UptimeRobot, cron-job.org,
-# Better Stack) is a good complement or replacement.
+# Pinging the health endpoint every five minutes keeps the instance warm. GitHub
+# delays scheduled runs under load (and disables schedules on a repository with
+# no activity for 60 days), so the interval is deliberately shorter than the
+# platform's ~15 minute idle window; an uptime monitor (UptimeRobot, cron-job.org,
+# Better Stack) is still a good complement or replacement.
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
