@@ -913,7 +913,6 @@ export function initCompetitors(api) {
             if (identity.google_place_id) detailsHtml += `<div><strong>Place ID:</strong> <code class="bg-white px-1 rounded">${identity.google_place_id}</code></div>`;
             if (identity.hex_id) detailsHtml += `<div><strong>Hex Pair:</strong> <code class="bg-white px-1 rounded">${identity.hex_id}</code></div>`;
             if (identity.cid) detailsHtml += `<div><strong>CID:</strong> <code class="bg-white px-1 rounded">${identity.cid}</code></div>`;
-            if (identity.cid) detailsHtml += `<div><strong>CID:</strong> <code class="bg-white px-1 rounded">${identity.cid}</code></div>`;
             if (identity.identity_source) {
               const sourceLabel = identity.identity_source === 'name' ? 'Name only (weak)' : identity.identity_source;
               detailsHtml += `<div><strong>Source:</strong> ${sourceLabel} (confidence: ${identity.confidence})</div>`;
@@ -1037,6 +1036,16 @@ export function initCompetitors(api) {
     // Show verification modal before adding custom competitor
     function showVerificationModal(verification) {
       return new Promise((resolve) => {
+        // The identity card reflects the real verification state instead of
+        // always claiming "Verified Business" (which contradicted the red
+        // "could not verify" banner shown right underneath it).
+        const isVerified = !!verification.verified;
+        const headerClass = isVerified ? 'bg-sage-50 border-sage-200' : 'bg-amber-50 border-amber-200';
+        const headerTextClass = isVerified ? 'text-sage-700' : 'text-amber-700';
+        const headerLabel = isVerified ? 'Verified Business' : 'Resolved Business (unverified)';
+        const headerIcon = isVerified
+          ? '<svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/></svg>'
+          : '<svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm1 11a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"/></svg>';
         // Create verification modal
         const modal = document.createElement('div');
         modal.className = 'fixed inset-0 modal-backdrop flex items-center justify-center z-50 p-4';
@@ -1047,10 +1056,10 @@ export function initCompetitors(api) {
               <button id="close-verification-modal" class="text-sand-400 hover:text-sand-700 text-lg leading-none">&times;</button>
             </div>
             <div class="space-y-4">
-              <div class="p-3 bg-sage-50 border border-sage-200 rounded-xl">
-                <div class="flex items-center gap-2 text-xs font-semibold text-sage-700 mb-2">
-                  <svg width="12" height="12" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"/></svg>
-                  <span>Verified Business</span>
+              <div class="p-3 ${headerClass} border rounded-xl">
+                <div class="flex items-center gap-2 text-xs font-semibold ${headerTextClass} mb-2">
+                  ${headerIcon}
+                  <span>${headerLabel}</span>
                 </div>
                 <div class="text-[11px] text-sand-600 space-y-1" id="verification-details"></div>
               </div>
@@ -1071,6 +1080,7 @@ export function initCompetitors(api) {
                     <span>Could not verify this business on Google Maps</span>
                   </div>
                   <p class="text-[11px] text-red-600 mt-1">This business does not have a verified Google Maps listing.</p>
+                  <p class="text-[11px] text-red-500 mt-1">You can still add it as a manual competitor &mdash; it will be tracked by name and enriched when it is scraped.</p>
                 </div>
               ` : ''}
               
@@ -1092,9 +1102,9 @@ export function initCompetitors(api) {
               </div>
               
               <div class="flex justify-end gap-2.5 pt-3">
-                ${!verification.already_tracked && verification.verified ? `
-                  <button id="confirm-add-competitor" class="px-4 py-2 bg-sage-500 hover:bg-sage-600 text-white text-xs font-semibold rounded-xl shadow-sm">
-                    Add to Project
+                ${!verification.already_tracked ? `
+                  <button id="confirm-add-competitor" class="px-4 py-2 ${verification.verified ? 'bg-sage-500 hover:bg-sage-600' : 'bg-terracotta-500 hover:bg-terracotta-600'} text-white text-xs font-semibold rounded-xl shadow-sm">
+                    ${verification.verified ? 'Add to Project' : 'Add Anyway'}
                   </button>
                 ` : ''}
                 <button id="cancel-verification" class="px-4 py-2 bg-sand-100 hover:bg-sand-200 text-sand-800 text-xs font-semibold rounded-xl">
@@ -1198,7 +1208,15 @@ export function initCompetitors(api) {
             name,
             gmap_url: url,
             project_id: projectId,
-            search_result: searchResult
+            search_result: searchResult,
+            // Hand over the identity the user already resolved with the Resolve
+            // button so verification recognises it, instead of re-deriving a
+            // weak name-only identity from the typed name + share link (a
+            // maps.app.goo.gl link carries no place id/hex/cid on its own).
+            place_key: resolvedPlaceKey?.value || null,
+            google_place_id: resolvedGooglePlaceId?.value || null,
+            cid: resolvedCid?.value || null,
+            hex_id: resolvedHexId?.value || null,
           });
           
           // Show verification result
