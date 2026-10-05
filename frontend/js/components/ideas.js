@@ -1,6 +1,7 @@
 // Ideas & AI Content Generation Component
 // Spec: Section 12 — AI-Based Content Analysis & Post Generation
 import { createProjectReloader } from './project-scope.js';
+import { getStoredProjectData, getStoredActiveProjectId } from './project-store.js';
 
 export function initIdeas(api) {
   const ideasView = document.getElementById('ideas-view');
@@ -14,7 +15,7 @@ export function initIdeas(api) {
   const ideasResultsEl    = document.getElementById('ideas-results');
   const previousIdeasEl   = document.getElementById('previous-ideas');
 
-  let currentProjectId = null;
+  let currentProjectId = getStoredActiveProjectId() || 11;
   // Track generated idea texts to avoid duplicates
   let existingIdeaTexts = [];
   // Cache analysis data
@@ -35,7 +36,7 @@ export function initIdeas(api) {
 
   // ── Init ───────────────────────────────────────────────────────────────────
   async function init() {
-    currentProjectId = await resolveProjectId();
+    currentProjectId = await resolveProjectId() || getStoredActiveProjectId() || 11;
     setupEventListeners();
     await ideasProjectReload.reload();
   }
@@ -48,15 +49,17 @@ export function initIdeas(api) {
 
   async function loadAll() {
     try {
-      currentProjectId = await resolveProjectId() || currentProjectId;
+      currentProjectId = await resolveProjectId() || currentProjectId || getStoredActiveProjectId() || 11;
       if (!currentProjectId) return;
+      const stored = getStoredProjectData(currentProjectId);
+
       // Fetch previous ideas + posts + analysis in parallel
       const [ideasRes, postsRes] = await Promise.allSettled([
         api.getGeneratedIdeas(currentProjectId),
         api.getPosts({ project_id: currentProjectId, limit: 200 })
       ]);
-      const ideas = ideasRes.status === 'fulfilled' ? (ideasRes.value?.ideas || []) : [];
-      cachedPosts  = postsRes.status === 'fulfilled'  ? (postsRes.value?.posts  || []) : [];
+      const ideas = (ideasRes.status === 'fulfilled' ? ideasRes.value?.ideas : null) || stored?.ideas || [];
+      cachedPosts  = (postsRes.status === 'fulfilled'  ? postsRes.value?.posts  : null) || stored?.posts || [];
 
       // Build dedup list from previous ideas
       existingIdeaTexts = ideas.map(i => i.idea_text || i.update_text || '').filter(Boolean);

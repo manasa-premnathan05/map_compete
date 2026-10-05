@@ -1,5 +1,10 @@
 // Posts Component
 import { createProjectReloader } from './project-scope.js';
+import {
+  getStoredProjectData,
+  saveStoredProjectData,
+  getStoredActiveProjectId
+} from './project-store.js';
 
 export function initPosts(api) {
   const postsView = document.getElementById('posts-view');
@@ -20,7 +25,7 @@ export function initPosts(api) {
   const publicPostsStateEl = document.getElementById('public-posts-state');
   const ownProfilePostsCountEl = document.getElementById('own-profile-posts-count');
 
-  let currentProjectId = null;
+  let currentProjectId = getStoredActiveProjectId() || 11;
   // Owner updates are always shown first; public (user generated) posts are
   // hidden until the user explicitly presses "Show public posts".
   let showPublicPosts = false;
@@ -105,15 +110,58 @@ export function initPosts(api) {
     }
   });
 
+  // Helper to apply and render posts list
+  function displayPosts(posts) {
+    lastLoadedPosts = posts;
+    updateOwnerPublicCounters(posts);
+
+    // Populate topic filter dynamically if needed
+    if (topicFilterEl && topicFilterEl.options.length <= 1) {
+      const topics = [...new Set(posts.map(p => p.detected_topic).filter(Boolean))];
+      topicFilterEl.innerHTML = `
+        <option value="all">All Topics</option>
+        ${topics.map(t => `<option value="${t}">${t}</option>`).join('')}
+      `;
+    }
+
+    const selectedTopic = topicFilterEl?.value || 'all';
+    const keyword = keywordFilterEl?.value?.trim() || '';
+
+    // Apply client-side filtering for search & topic
+    let filteredPosts = visiblePosts(posts);
+    if (selectedTopic !== 'all') {
+      filteredPosts = filteredPosts.filter(p => p.detected_topic === selectedTopic);
+    }
+    if (keyword) {
+      const lowerKw = keyword.toLowerCase();
+      filteredPosts = filteredPosts.filter(post =>
+        (post.text_content && post.text_content.toLowerCase().includes(lowerKw)) ||
+        (post.detected_topic && post.detected_topic.toLowerCase().includes(lowerKw)) ||
+        (post.competitor_name && post.competitor_name.toLowerCase().includes(lowerKw)) ||
+        (post.detected_keywords && post.detected_keywords.some(k => k.toLowerCase().includes(lowerKw)))
+      );
+    }
+
+    renderPostsGrid(filteredPosts);
+  }
+
   // Load competitor filter based on selected project
   async function loadCompetitorFilter() {
     try {
-      const projectId = await resolveProjectId();
+      const projectId = await resolveProjectId() || getStoredActiveProjectId() || 11;
       if (!projectId) {
         if (competitorFilterEl) {
           competitorFilterEl.innerHTML = '<option value="all">All Competitors</option>';
         }
         return;
+      }
+      // Populate from cached data immediately if available
+      const cached = getStoredProjectData(projectId);
+      if (cached?.competitors?.length && competitorFilterEl) {
+        competitorFilterEl.innerHTML = `
+          <option value="all">All Competitors</option>
+          ${cached.competitors.map(competitor => `<option value="${competitor.id}">${competitor.name}</option>`).join('')}
+        `;
       }
       const competitorsResponse = await api.getCompetitors(projectId);
       const competitors = competitorsResponse.competitors || [];
@@ -124,29 +172,28 @@ export function initPosts(api) {
         `;
       }
     } catch (error) {
-      console.error('Error loading competitor filter:', error);
+      console.warn('Error loading competitor filter live:', error);
     }
   }
 
   // Load posts based on filters
   async function loadPosts() {
     try {
-      api.showLoading();
-
-      const projectId = await resolveProjectId();
+      const projectId = await resolveProjectId() || getStoredActiveProjectId() || 11;
       if (!projectId) {
-        // No company to show posts for: render the empty card instead of
-        // requesting a project that does not exist (the finally block hides
-        // the loading overlay).
         renderPostsGrid([]);
         return;
       }
-      console.log('[Posts] Loading posts for project:', projectId);
-      
-      const competitorId = competitorFilterEl?.value === 'all' ? undefined : parseInt(competitorFilterEl?.value);
-      const selectedTopic = topicFilterEl?.value || 'all';
-      const keyword = keywordFilterEl?.value?.trim() || '';
+      currentProjectId = projectId;
 
+      // 1. Immediately display cached posts if available
+      const cached = getStoredProjectData(projectId);
+      if (cached?.posts?.length) {
+        displayPosts(cached.posts);
+      }
+
+      api.showLoading();
+      const competitorId = competitorFilterEl?.value === 'all' ? undefined : parseInt(competitorFilterEl?.value);
       const response = await api.getPosts({
         project_id: projectId,
         competitor_id: competitorId,
@@ -154,42 +201,13 @@ export function initPosts(api) {
         include_public: true
       });
       const posts = response.posts || [];
-      lastLoadedPosts = posts;
-      updateOwnerPublicCounters(posts);
-      console.log('[Posts] Received', posts.length, 'posts from API');
-      
-      // ... rest of the function
-
-      // Populate topic filter dynamically if needed
-      if (topicFilterEl && topicFilterEl.options.length <= 1) {
-        const topics = [...new Set(posts.map(p => p.detected_topic).filter(Boolean))];
-        topicFilterEl.innerHTML = `
-          <option value="all">All Topics</option>
-          ${topics.map(t => `<option value="${t}">${t}</option>`).join('')}
-        `;
-      }
-
-      // Apply client-side filtering for search & topic (owner updates first,
-      // public posts only when the user asked to see them)
-      let filteredPosts = visiblePosts(posts);
-      if (selectedTopic !== 'all') {
-        filteredPosts = filteredPosts.filter(p => p.detected_topic === selectedTopic);
-      }
-      if (keyword) {
-        const lowerKw = keyword.toLowerCase();
-        filteredPosts = filteredPosts.filter(post =>
-          (post.text_content && post.text_content.toLowerCase().includes(lowerKw)) ||
-          (post.detected_topic && post.detected_topic.toLowerCase().includes(lowerKw)) ||
-          (post.competitor_name && post.competitor_name.toLowerCase().includes(lowerKw)) ||
-          (post.detected_keywords && post.detected_keywords.some(k => k.toLowerCase().includes(lowerKw)))
-        );
-      }
-
-      renderPostsGrid(filteredPosts);
-
+      displayPosts(posts);
+      saveStoredProjectData(projectId, { posts });
     } catch (error) {
-      console.error('[Posts] Error loading posts:', error);
-      showErrorState(error.message);
+      console.warn('[Posts] Error loading posts live, using cached data:', error);
+      if (!lastLoadedPosts?.length) {
+        showErrorState(error.message);
+      }
     } finally {
       api.hideLoading();
     }

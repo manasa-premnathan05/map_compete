@@ -1,6 +1,11 @@
 // Analytics & Merged Market Intelligence Component (PDF Spec Compliance)
 // Features all 6 Modules from Project Specification with real Chart.js graphs and Leaflet Map
 import { createProjectReloader } from './project-scope.js';
+import {
+  getStoredProjectData,
+  saveStoredProjectData,
+  getStoredActiveProjectId
+} from './project-store.js';
 
 export function initAnalytics(api) {
   const analyticsView = document.getElementById('analytics-view');
@@ -205,13 +210,14 @@ export function initAnalytics(api) {
         api.getTopicTrends(projectId)
       ]);
 
-      cachedMarketData = marketRes.status === 'fulfilled' ? marketRes.value : null;
+      const stored = getStoredProjectData(projectId);
+      cachedMarketData = marketRes.status === 'fulfilled' ? marketRes.value : (stored?.competitors ? { competitors: stored.competitors } : null);
       cachedReviewAnalytics = reviewAnalyticsRes.status === 'fulfilled' ? reviewAnalyticsRes.value : null;
-      const topics = topicData.status === 'fulfilled' ? (topicData.value?.topics || []) : [];
-      const keywords = keywordData.status === 'fulfilled' ? (keywordData.value?.keywords || []) : [];
+      const topics = (topicData.status === 'fulfilled' ? topicData.value?.topics : null) || stored?.topics || [];
+      const keywords = (keywordData.status === 'fulfilled' ? keywordData.value?.keywords : null) || stored?.keywords || [];
       cachedReviews = reviewsRes.status === 'fulfilled' ? (reviewsRes.value?.reviews || []) : [];
-      cachedPosts = postsRes.status === 'fulfilled' ? (postsRes.value?.posts || []) : [];
-      const marketGaps = marketGapsRes.status === 'fulfilled' ? (marketGapsRes.value?.gaps || []) : [];
+      cachedPosts = (postsRes.status === 'fulfilled' ? postsRes.value?.posts : null) || stored?.posts || [];
+      const marketGaps = (marketGapsRes.status === 'fulfilled' ? marketGapsRes.value?.gaps : null) || stored?.market_gaps || [];
       const trendData = trendRes.status === 'fulfilled' ? trendRes.value : null;
 
       // 1. Render Market KPIs

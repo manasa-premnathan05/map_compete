@@ -1,12 +1,17 @@
 // Competitors Component with Smart Google Maps Discovery & Keywords Management
 import { createProjectReloader, readActiveProjectId } from './project-scope.js';
+import {
+  getStoredProjectData,
+  saveStoredProjectData,
+  getStoredActiveProjectId
+} from './project-store.js';
 
 export function initCompetitors(api) {
   const competitorsView = document.getElementById('competitors-view');
   if (!competitorsView) return;
 
   // State
-  let currentProjectId = 1;
+  let currentProjectId = getStoredActiveProjectId() || 11;
   let isOnlineScope = false;
   let lastDiscoveredCompetitors = [];
   let currentProjectCompetitors = [];
@@ -136,15 +141,24 @@ export function initCompetitors(api) {
 
   // Load competitors for current project
   async function loadCompetitors() {
+    currentProjectId = activeProjectId() || getStoredActiveProjectId() || 11;
+    // 1. Immediately paint cached competitors if available
+    const cached = getStoredProjectData(currentProjectId);
+    if (cached?.competitors?.length) {
+      currentProjectCompetitors = cached.competitors;
+      renderCompetitorsTable(currentProjectCompetitors);
+    }
     try {
       api.showLoading();
-      currentProjectId = activeProjectId();
       const response = await api.getCompetitors(currentProjectId);
       currentProjectCompetitors = response.competitors || [];
       renderCompetitorsTable(currentProjectCompetitors);
+      saveStoredProjectData(currentProjectId, { competitors: currentProjectCompetitors });
     } catch (error) {
-      console.error('Error loading competitors:', error);
-      showErrorState(error.message);
+      console.warn('Error loading competitors live, using stored data:', error);
+      if (!currentProjectCompetitors?.length) {
+        showErrorState(error.message);
+      }
     } finally {
       api.hideLoading();
     }
@@ -153,13 +167,21 @@ export function initCompetitors(api) {
   // Load project target keywords
   async function loadKeywords() {
     if (!projectKeywordsContainer) return;
+    const pid = activeProjectId() || getStoredActiveProjectId() || 11;
+    const cached = getStoredProjectData(pid);
+    if (cached?.keywords?.length) {
+      renderKeywords(cached.keywords);
+    }
     try {
-      const response = await api.getKeywords(activeProjectId());
+      const response = await api.getKeywords(pid);
       const keywords = response.keywords || [];
       renderKeywords(keywords);
+      saveStoredProjectData(pid, { keywords });
     } catch (error) {
-      console.error('Error loading keywords:', error);
-      projectKeywordsContainer.innerHTML = `<span class="text-xs text-sand-500">No keywords added yet.</span>`;
+      console.warn('Error loading keywords live:', error);
+      if (!cached?.keywords?.length) {
+        projectKeywordsContainer.innerHTML = `<span class="text-xs text-sand-500">No keywords added yet.</span>`;
+      }
     }
   }
 

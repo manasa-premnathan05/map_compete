@@ -1,5 +1,13 @@
 // Comprehensive Earthy & Pastel Dashboard Component
 import { createProjectReloader, selectedProjectLabel } from './project-scope.js';
+import {
+  getStoredProjects,
+  saveStoredProjects,
+  getStoredActiveProjectId,
+  saveStoredActiveProjectId,
+  getStoredProjectData,
+  saveStoredProjectData
+} from './project-store.js';
 
 export function initDashboard(api) {
   const dashboardView = document.getElementById('dashboard-view');
@@ -203,18 +211,108 @@ export function initDashboard(api) {
     renderRecentPosts([]);
   }
 
+  // Paint dashboard widgets and KPIs immediately from a stored or live snapshot
+  function paintSnapshot(snapshot) {
+    if (!snapshot) return;
+    const project = snapshot.project || {};
+    const competitors = snapshot.competitors || [];
+    const posts = snapshot.posts || [];
+    const stats = snapshot.stats || {};
+    const logs = snapshot.logs || (stats.latest_run ? [stats.latest_run] : []);
+    const topics = snapshot.topics || stats.top_topics || [];
+    const keywords = snapshot.keywords || stats.top_keywords || [];
+    const ideas = snapshot.ideas || [];
+    const marketGaps = snapshot.market_gaps || [];
+
+    // 1. Update Title and description
+    if (dashboardProjectTitle && project.name) {
+      dashboardProjectTitle.textContent = project.name;
+    }
+    if (dashboardProjectDesc) {
+      dashboardProjectDesc.textContent = project.our_profile
+        ? `Tracking local competitors for: ${project.our_profile}`
+        : (project.location ? `${project.location} \u2022 ${project.field || 'Intelligence'}` : 'Competitor intelligence for this project');
+    }
+    if (dashboardLastSync) {
+      dashboardLastSync.textContent = stats.last_scrape_at
+        ? `Last sync: ${formatTimeAgo(new Date(stats.last_scrape_at))}`
+        : (logs.length > 0 ? `Last sync: ${formatTimeAgo(new Date(logs[0].start_time))}` : 'Saved intelligence');
+    }
+
+    // 2. Update KPI cards
+    const competitorCount = stats.unique_businesses || competitors.length;
+    if (competitorsCountEl) competitorsCountEl.textContent = competitorCount;
+    const totalPosts = stats.total_posts ?? posts.length;
+    if (totalPostsCountEl) totalPostsCountEl.textContent = totalPosts;
+    const newPostsLatestRun = stats.new_posts_latest_run ?? logs[0]?.new_posts ?? 0;
+    if (newPostsCountEl) newPostsCountEl.textContent = newPostsLatestRun;
+    const duplicatesLatestRun = stats.duplicates_skipped_latest_run ?? logs[0]?.duplicates_skipped ?? 0;
+    if (duplicatesCountEl) duplicatesCountEl.textContent = duplicatesLatestRun;
+    if (topTopicEl) {
+      topTopicEl.textContent = topics[0]?.detected_topic || topics[0]?.topic || stats.top_topics?.[0]?.topic || posts[0]?.detected_topic || 'Store & Visit';
+    }
+    const generatedContent = stats.generated_content_count ?? ideas.length;
+    if (ideasCountEl) ideasCountEl.textContent = generatedContent;
+    if (generatedContentNoteEl) {
+      const usedCount = stats.generated_content_used ?? ideas.filter(idea => idea.used_flag).length;
+      generatedContentNoteEl.textContent = usedCount ? `${usedCount} already used` : 'Ready to post';
+    }
+
+    // Failed scraping attempts
+    const failedAttempts = stats.totals?.failed_attempts
+      ?? logs.reduce((sum, log) => sum + (log.failures || 0), 0);
+    const captchaInterventions = stats.totals?.captcha_interventions
+      ?? logs.filter(log => log.has_captcha_issue).length;
+    if (failedScrapesCountEl) failedScrapesCountEl.textContent = failedAttempts;
+    if (failedScrapesNoteEl) {
+      failedScrapesNoteEl.textContent = failedAttempts
+        ? `${stats.totals?.success_rate ?? 100}% success - ${captchaInterventions} CAPTCHA hold${captchaInterventions === 1 ? '' : 's'}`
+        : 'No failures logged';
+    }
+    if (failedScrapesBarEl) {
+      const totalRuns = Math.max(1, stats.totals?.total_runs ?? logs.length ?? 1);
+      const failureShare = Math.min(100, Math.round((failedAttempts / totalRuns) * 100));
+      failedScrapesBarEl.style.width = `${Math.max(5, failureShare)}%`;
+    }
+
+    // Images downloaded
+    const imagesLatestRun = stats.images_downloaded_latest_run ?? logs[0]?.images_downloaded ?? 0;
+    const imagesTotal = stats.totals?.images_downloaded ?? imagesLatestRun;
+    if (imagesDownloadedCountEl) imagesDownloadedCountEl.textContent = imagesTotal;
+    if (imagesDownloadedNoteEl) {
+      imagesDownloadedNoteEl.textContent = imagesTotal
+        ? `${imagesLatestRun} from latest scrape`
+        : 'No images captured yet';
+    }
+
+    // Render tables and widgets
+    renderCompetitorsTable(competitors, posts);
+    renderTopics(topics, posts);
+    renderKeywords(keywords, posts);
+    renderRecentPosts(posts);
+    renderIdeaSpotlight(ideas);
+    renderActivityLog(logs, project.name || 'Project');
+    renderMarketGaps(marketGaps);
+    renderScrapingStats(stats, logs, project.name || 'Project');
+  }
+
   // Initialize Dashboard
   async function init() {
     try {
-      const projects = await loadProjects();
-      if (!projects.length && projectLoadFailed) {
-        // Bootstrap failed: the recovery loop keeps trying in the background and
-        // refreshes the dashboard as soon as the backend answers again.
-        setupEventListeners();
-        return;
+      // 1. Establish initial project ID and render stored snapshot immediately (0ms paint)
+      currentProjectId = getStoredActiveProjectId() || parseInt(projectSelectEl?.value, 10) || 11;
+      const initialSnapshot = getStoredProjectData(currentProjectId);
+      if (initialSnapshot) {
+        paintSnapshot(initialSnapshot);
       }
-      await dashboardReload.reload();
+
       setupEventListeners();
+
+      // 2. Load projects and reload fresh data from backend in background
+      const projects = await loadProjects({ silent: true });
+      if (projects && projects.length) {
+        await dashboardReload.reload();
+      }
     } catch (err) {
       console.error('Error initializing dashboard:', err);
     }
@@ -228,11 +326,21 @@ export function initDashboard(api) {
     const delays = [0, ...retries];
     let lastError = null;
 
+    // Ensure selector has at least stored options immediately
+    const stored = getStoredProjects();
+    if (stored && stored.length > 0 && (!projectSelectEl?.value || projectSelectEl?.options?.length <= 1)) {
+      const activeId = currentProjectId || getStoredActiveProjectId() || stored[0].id;
+      const optionsHtml = stored.map(p => `
+        <option value="${p.id}" ${p.id === activeId ? 'selected' : ''}>${p.name}</option>
+      `).join('');
+      setProjectOptions(optionsHtml);
+      currentProjectId = activeId;
+    }
+
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       if (delays[attempt]) {
-        // Waiting on the backend again: say what is happening instead of leaving
-        // a bare "Loading projects..." on screen for the whole boot/restart.
-        if (!projectSelectEl?.value) setProjectOptions(BOOT_PLACEHOLDER);
+        // Only show boot placeholder if there are NO valid options loaded
+        if (!projectSelectEl?.value && !stored.length) setProjectOptions(BOOT_PLACEHOLDER);
         await new Promise(resolve => setTimeout(resolve, delays[attempt]));
       }
       try {
@@ -241,8 +349,9 @@ export function initDashboard(api) {
         const mobileProjectSelectEl = document.getElementById('mobile-project-select');
 
         if (projects.length > 0) {
+          saveStoredProjects(projects);
           // Preserve the currently selected project when options are rebuilt
-          const previous = parseInt(projectSelectEl?.value, 10) || parseInt(mobileProjectSelectEl?.value, 10) || currentProjectId;
+          const previous = parseInt(projectSelectEl?.value, 10) || parseInt(mobileProjectSelectEl?.value, 10) || currentProjectId || getStoredActiveProjectId();
           const stillExists = projects.some(p => p.id === previous);
           const targetId = stillExists ? previous : projects[0].id;
           const optionsHtml = projects.map(p => `
@@ -252,12 +361,14 @@ export function initDashboard(api) {
           if (projectSelectEl) projectSelectEl.innerHTML = optionsHtml;
           if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = optionsHtml;
           currentProjectId = targetId;
+          saveStoredActiveProjectId(targetId);
         } else {
-          // The last project is gone: drop the stale option instead of leaving a
-          // deleted company in the switcher.
-          if (projectSelectEl) projectSelectEl.innerHTML = '';
-          if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = '';
-          currentProjectId = null;
+          // The last project is gone: drop the stale option only if nothing in storage
+          if (!stored.length) {
+            if (projectSelectEl) projectSelectEl.innerHTML = '';
+            if (mobileProjectSelectEl) mobileProjectSelectEl.innerHTML = '';
+            currentProjectId = null;
+          }
         }
 
         if (projectLoadFailed && !silent) {
@@ -265,7 +376,7 @@ export function initDashboard(api) {
         }
         projectLoadFailed = false;
         stopProjectRecovery();
-        return projects;
+        return projects.length ? projects : stored;
       } catch (err) {
         lastError = err;
         if (attempt < delays.length - 1) {
@@ -274,15 +385,24 @@ export function initDashboard(api) {
       }
     }
 
-    // Every attempt failed: say so once, then keep probing in the background.
+    // Every attempt failed: Keep stored projects intact!
     projectLoadFailed = true;
-    setProjectOptions('<option value="">Backend unreachable - retrying in the background...</option>');
-    if (!silent) {
+    if (stored.length > 0) {
+      const activeId = currentProjectId || getStoredActiveProjectId() || stored[0].id;
+      const optionsHtml = stored.map(p => `
+        <option value="${p.id}" ${p.id === activeId ? 'selected' : ''}>${p.name}</option>
+      `).join('');
+      setProjectOptions(optionsHtml);
+      currentProjectId = activeId;
+      console.warn('Backend temporarily unreachable; retained saved projects:', stored.map(p => p.name));
+    } else {
+      setProjectOptions('<option value="">Backend unreachable - retrying in the background...</option>');
+    }
+    if (!silent && !stored.length) {
       window.showToast?.(`Could not load projects: ${lastError?.message || 'request failed'}`, 'error');
     }
-    console.error('Project list unavailable after retries:', lastError);
     scheduleProjectRecovery();
-    return [];
+    return stored;
   }
 
   // A hidden tab does not need to keep polling; a tab that becomes visible again
@@ -341,17 +461,18 @@ export function initDashboard(api) {
         return;
       }
 
+      // 1. Immediately paint stored snapshot for instant responsiveness
+      const cached = getStoredProjectData(projectId);
+      if (cached) {
+        paintSnapshot(cached);
+      }
+
       // Claim this load. Only the newest claim is allowed to paint, so a late
       // answer for a project the user has already left cannot overwrite the
       // figures of the project that is selected now.
       const sequence = (loadSequence += 1);
 
-      // Two waves instead of ten concurrent requests. The instance serving the
-      // API has a fraction of a CPU, so a burst of ten requests queues behind
-      // each other while the KPI cards stay empty. The first wave feeds the
-      // headline figures; the widgets follow as soon as it completes. Every
-      // request is still independent (`allSettled`), so one failure never
-      // blanks the dashboard.
+      // Two waves instead of ten concurrent requests.
       const [
         projectRes,
         competitorsRes,
@@ -364,23 +485,20 @@ export function initDashboard(api) {
         api.getScrapingStats(projectId)
       ]);
 
-      // The selection moved on while the headline figures were in flight: this
-      // answer belongs to a project that is no longer selected.
       if (sequence !== loadSequence) return;
 
-      // Paint the useful first wave before waiting for optional widgets. A slow
-      // market-gap or analytics read must not keep the entire project loading.
       const headlineProject = projectRes.status === 'fulfilled' ? projectRes.value?.project : null;
       const headlineCompetitors = competitorsRes.status === 'fulfilled' ? (competitorsRes.value?.competitors || []) : [];
       const headlinePosts = postsRes.status === 'fulfilled' ? (postsRes.value?.posts || []) : [];
       const headlineStats = scrapingStatsRes.status === 'fulfilled' ? scrapingStatsRes.value : null;
+
       if (headlineProject) {
         if (dashboardProjectTitle) dashboardProjectTitle.textContent = headlineProject.name;
         if (dashboardProjectDesc) dashboardProjectDesc.textContent = headlineProject.our_profile
-          ? `Tracking local competitors for: ${headlineProject.our_profile}` : 'Competitor intelligence for this project';
+          ? `Tracking local competitors for: ${headlineProject.our_profile}` : (headlineProject.location ? `${headlineProject.location} \u2022 ${headlineProject.field || 'Intelligence'}` : 'Competitor intelligence for this project');
       }
-      if (competitorsCountEl) competitorsCountEl.textContent = headlineStats?.unique_businesses ?? headlineCompetitors.length;
-      if (totalPostsCountEl) totalPostsCountEl.textContent = headlineStats?.total_posts ?? headlinePosts.length;
+      if (competitorsCountEl && (headlineStats || headlineCompetitors.length)) competitorsCountEl.textContent = headlineStats?.unique_businesses ?? headlineCompetitors.length;
+      if (totalPostsCountEl && (headlineStats || headlinePosts.length)) totalPostsCountEl.textContent = headlineStats?.total_posts ?? headlinePosts.length;
       if (headlineStats) {
         if (newPostsCountEl) newPostsCountEl.textContent = headlineStats.new_posts_latest_run ?? 0;
         if (duplicatesCountEl) duplicatesCountEl.textContent = headlineStats.duplicates_skipped_latest_run ?? 0;
@@ -390,8 +508,8 @@ export function initDashboard(api) {
         if (dashboardLastSync) dashboardLastSync.textContent = headlineStats.last_scrape_at
           ? `Last sync: ${formatTimeAgo(new Date(headlineStats.last_scrape_at))}` : 'No sync recorded yet';
       }
-      renderCompetitorsTable(headlineCompetitors, headlinePosts);
-      renderRecentPosts(headlinePosts);
+      if (headlineCompetitors.length) renderCompetitorsTable(headlineCompetitors, headlinePosts);
+      if (headlinePosts.length) renderRecentPosts(headlinePosts);
 
       const [
         scrapingLogsRes,
@@ -411,10 +529,6 @@ export function initDashboard(api) {
 
       if (sequence !== loadSequence) return;
 
-      // Every request above is independent (`allSettled`), so a single failing
-      // endpoint never blanks the dashboard. When *everything* fails the API is
-      // unreachable and the cards would silently keep their placeholder dashes -
-      // say so instead.
       const settled = [
         projectRes, competitorsRes, postsRes, scrapingLogsRes, topicsRes,
         keywordsRes, ideasRes, projectPlacesRes, marketGapsRes, scrapingStatsRes
@@ -422,113 +536,43 @@ export function initDashboard(api) {
       const rejected = settled.filter(result => result.status === 'rejected');
       if (rejected.length === settled.length) {
         const reason = rejected[0]?.reason?.message || 'the API is unreachable';
-        console.error('Dashboard data could not be loaded:', reason);
+        console.warn('Dashboard data network request unavailable:', reason);
+        if (cached) {
+          if (dashboardLastSync) dashboardLastSync.textContent = 'Saved intelligence (live syncing...)';
+          return;
+        }
         window.showToast?.(`Could not load dashboard data: ${reason}`, 'error');
         showProjectLoadFailure(reason);
         return;
       }
 
-      const project = projectRes.status === 'fulfilled' ? projectRes.value?.project : null;
-      const competitors = competitorsRes.status === 'fulfilled' ? (competitorsRes.value?.competitors || []) : [];
-      const posts = postsRes.status === 'fulfilled' ? (postsRes.value?.posts || []) : [];
-      const logs = scrapingLogsRes.status === 'fulfilled' ? (scrapingLogsRes.value?.logs || []) : [];
-      const topics = topicsRes.status === 'fulfilled' ? (topicsRes.value?.topics || []) : [];
-      const keywords = keywordsRes.status === 'fulfilled' ? (keywordsRes.value?.keywords || []) : [];
-      const ideas = ideasRes.status === 'fulfilled' ? (ideasRes.value?.ideas || []) : [];
-      const projectPlaces = projectPlacesRes.status === 'fulfilled' ? (projectPlacesRes.value?.places || []) : [];
-      const marketGaps = marketGapsRes.status === 'fulfilled' ? (marketGapsRes.value?.gaps || []) : [];
-      // Statistics endpoint: fall back to the block returned with the logs.
+      const project = projectRes.status === 'fulfilled' ? projectRes.value?.project : (cached?.project || null);
+      const competitors = competitorsRes.status === 'fulfilled' ? (competitorsRes.value?.competitors || []) : (cached?.competitors || []);
+      const posts = postsRes.status === 'fulfilled' ? (postsRes.value?.posts || []) : (cached?.posts || []);
+      const logs = scrapingLogsRes.status === 'fulfilled' ? (scrapingLogsRes.value?.logs || []) : (cached?.logs || []);
+      const topics = topicsRes.status === 'fulfilled' ? (topicsRes.value?.topics || []) : (cached?.topics || []);
+      const keywords = keywordsRes.status === 'fulfilled' ? (keywordsRes.value?.keywords || []) : (cached?.keywords || []);
+      const ideas = ideasRes.status === 'fulfilled' ? (ideasRes.value?.ideas || []) : (cached?.ideas || []);
+      const marketGaps = marketGapsRes.status === 'fulfilled' ? (marketGapsRes.value?.gaps || []) : (cached?.market_gaps || []);
       let stats = scrapingStatsRes.status === 'fulfilled' ? scrapingStatsRes.value : null;
       if (!stats && scrapingLogsRes.status === 'fulfilled') {
         stats = scrapingLogsRes.value?.stats || null;
       }
-      stats = stats || {};
+      stats = stats || cached?.stats || {};
 
-      // 1. Update Title and description
-      if (dashboardProjectTitle && project?.name) {
-        dashboardProjectTitle.textContent = project.name;
-      }
-      if (dashboardProjectDesc && project?.our_profile) {
-        dashboardProjectDesc.textContent = `Tracking local competitors for: ${project.our_profile}`;
-      }
-      if (dashboardLastSync) {
-        // Always replace the "Loading..." text a switch puts here, otherwise a
-        // project without collection logs would keep claiming to be loading.
-        dashboardLastSync.textContent = logs.length > 0
-          ? `Last sync: ${formatTimeAgo(new Date(logs[0].start_time))}`
-          : 'No sync recorded yet';
-      }
-
-      // 2. Update the KPI cards (requirement 20)
-      // Use the canonical businesses count for competitors (unique places).
-      const competitorCount = stats.unique_businesses || projectPlaces.length || competitors.length;
-      if (competitorsCountEl) competitorsCountEl.textContent = competitorCount;
-      const totalPosts = stats.total_posts ?? posts.length;
-      if (totalPostsCountEl) totalPostsCountEl.textContent = totalPosts;
-      const newPostsLatestRun = stats.new_posts_latest_run ?? logs[0]?.new_posts ?? 0;
-      if (newPostsCountEl) newPostsCountEl.textContent = newPostsLatestRun;
-      const duplicatesLatestRun = stats.duplicates_skipped_latest_run ?? logs[0]?.duplicates_skipped ?? 0;
-      if (duplicatesCountEl) duplicatesCountEl.textContent = duplicatesLatestRun;
-      if (topTopicEl) {
-        topTopicEl.textContent = topics[0]?.detected_topic || topics[0]?.topic || posts[0]?.detected_topic || '—';
-      }
-      const generatedContent = stats.generated_content_count ?? ideas.length;
-      if (ideasCountEl) ideasCountEl.textContent = generatedContent;
-      if (generatedContentNoteEl) {
-        const usedCount = stats.generated_content_used ?? ideas.filter(idea => idea.used_flag).length;
-        generatedContentNoteEl.textContent = usedCount ? `${usedCount} already used` : 'Ready to post';
-      }
-
-      // Failed scraping attempts + success rate (requirement 20)
-      const failedAttempts = stats.totals?.failed_attempts
-        ?? logs.reduce((sum, log) => sum + (log.failures || 0), 0);
-      const captchaInterventions = stats.totals?.captcha_interventions
-        ?? logs.filter(log => log.has_captcha_issue).length;
-      if (failedScrapesCountEl) failedScrapesCountEl.textContent = failedAttempts;
-      if (failedScrapesNoteEl) {
-        failedScrapesNoteEl.textContent = failedAttempts
-          ? `${stats.totals?.success_rate ?? 100}% success - ${captchaInterventions} CAPTCHA hold${captchaInterventions === 1 ? '' : 's'}`
-          : 'No failures logged';
-      }
-      if (failedScrapesBarEl) {
-        const totalRuns = Math.max(1, stats.totals?.total_runs ?? logs.length ?? 1);
-        const failureShare = Math.min(100, Math.round((failedAttempts / totalRuns) * 100));
-        failedScrapesBarEl.style.width = `${Math.max(5, failureShare)}%`;
-      }
-
-      // Images downloaded (requirement 21)
-      const imagesLatestRun = stats.images_downloaded_latest_run ?? logs[0]?.images_downloaded ?? 0;
-      const imagesTotal = stats.totals?.images_downloaded ?? imagesLatestRun;
-      if (imagesDownloadedCountEl) imagesDownloadedCountEl.textContent = imagesTotal;
-      if (imagesDownloadedNoteEl) {
-        imagesDownloadedNoteEl.textContent = imagesTotal
-          ? `${imagesLatestRun} from latest scrape`
-          : 'No images captured yet';
-      }
-
-      // 3. Render Competitors Landscape Table
-      renderCompetitorsTable(competitors, posts);
-
-      // 4. Render Trending Topics
-      renderTopics(topics, posts);
-
-      // 5. Render Keywords Cloud
-      renderKeywords(keywords, posts);
-
-      // 6. Render Latest Updates Feed
-      renderRecentPosts(posts);
-
-      // 7. Render AI Idea Spotlight
-      renderIdeaSpotlight(ideas);
-
-      // 8. Render Intelligence Activity Log
-      renderActivityLog(logs, project?.name || 'Project');
-
-      // 9. Render Strategic Market Gaps
-      renderMarketGaps(marketGaps);
-
-      // 10. Render Scraping Logs & Statistics (requirements 20 & 21)
-      renderScrapingStats(stats, logs, project?.name || 'Project');
+      const liveSnapshot = {
+        project,
+        competitors,
+        posts,
+        logs,
+        topics,
+        keywords,
+        ideas,
+        market_gaps: marketGaps,
+        stats
+      };
+      saveStoredProjectData(projectId, liveSnapshot);
+      paintSnapshot(liveSnapshot);
 
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -1093,17 +1137,29 @@ export function initDashboard(api) {
     // Project switcher
     projectSelectEl?.addEventListener('change', () => {
       currentProjectId = parseInt(projectSelectEl.value, 10) || null;
+      if (currentProjectId) saveStoredActiveProjectId(currentProjectId);
       const mobileSelect = document.getElementById('mobile-project-select');
       if (mobileSelect) mobileSelect.value = projectSelectEl.value;
-      showProjectLoading();
+      const cached = currentProjectId ? getStoredProjectData(currentProjectId) : null;
+      if (cached) {
+        paintSnapshot(cached);
+      } else {
+        showProjectLoading();
+      }
       dashboardReload.reload();
     });
 
     const mobileProjectSelectEl = document.getElementById('mobile-project-select');
     mobileProjectSelectEl?.addEventListener('change', () => {
       currentProjectId = parseInt(mobileProjectSelectEl.value, 10) || null;
+      if (currentProjectId) saveStoredActiveProjectId(currentProjectId);
       if (projectSelectEl) projectSelectEl.value = mobileProjectSelectEl.value;
-      showProjectLoading();
+      const cached = currentProjectId ? getStoredProjectData(currentProjectId) : null;
+      if (cached) {
+        paintSnapshot(cached);
+      } else {
+        showProjectLoading();
+      }
       dashboardReload.reload();
     });
 
@@ -1228,6 +1284,12 @@ export function initDashboard(api) {
         newProjectModal?.classList.add('hidden');
         newProjectForm.reset();
 
+        if (res.project?.id) {
+          const currentList = getStoredProjects();
+          saveStoredProjects([...currentList.filter(p => p.id !== res.project.id), res.project]);
+          saveStoredActiveProjectId(res.project.id);
+        }
+
         // Reload projects and switch to the new one, then broadcast the change
         // so every component (competitors, posts, analytics, ideas) loads data
         // for the new project instead of keeping a stale project id.
@@ -1235,6 +1297,7 @@ export function initDashboard(api) {
         if (res.project?.id && projectSelectEl) {
           projectSelectEl.value = String(res.project.id);
           currentProjectId = res.project.id;
+          saveStoredActiveProjectId(currentProjectId);
           projectSelectEl.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
           await dashboardReload.reload();
@@ -1249,7 +1312,16 @@ export function initDashboard(api) {
           );
         }
       } catch (err) {
-        window.showToast?.(`Error creating project: ${err.message}`, 'error');
+        window.showToast?.(`Could not create project: ${err.message}. Your saved projects are safe.`, 'error');
+        // Ensure selector retains stored projects
+        const stored = getStoredProjects();
+        if (stored.length && (!projectSelectEl?.value || projectSelectEl?.options?.length === 0)) {
+          const activeId = currentProjectId || stored[0].id;
+          const optionsHtml = stored.map(p => `
+            <option value="${p.id}" ${p.id === activeId ? 'selected' : ''}>${p.name}</option>
+          `).join('');
+          setProjectOptions(optionsHtml);
+        }
       } finally {
         newProjectForm.dataset.submitting = 'false';
         if (saveProjectBtn) {
