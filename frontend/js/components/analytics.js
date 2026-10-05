@@ -1,5 +1,5 @@
-// Analytics & Merged Market Intelligence Component (PDF Spec Compliance)
-// Features all 6 Modules from Project Specification with real Chart.js graphs and Leaflet Map
+﻿// Analytics & Merged Market Intelligence Component
+// Features all 6 modules with real Chart.js graphs and Leaflet Map
 import { createProjectReloader } from './project-scope.js';
 import {
   getStoredProjectData,
@@ -120,7 +120,7 @@ export function initAnalytics(api) {
     reload: loadAnalyticsData
   });
 
-  // Subnav tab switching for the 6 PDF Modules
+  // Subnav tab switching for the 6 analytics modules
   function setupSubnav() {
     const subnavButtons = document.querySelectorAll('.analytics-subnav-btn');
     const modules = document.querySelectorAll('.analytics-module');
@@ -1045,7 +1045,7 @@ export function initAnalytics(api) {
 
 
 
-  // 1. Render Merged Market KPIs (PDF Page 3) — real scraped values only
+  // 1. Render Merged Market KPIs — real scraped values only
   function renderMarketKPIs(market) {
     const avgRating = market?.market_avg_rating;
     const totalRevs = market?.total_reviews;
@@ -1213,7 +1213,7 @@ export function initAnalytics(api) {
     });
   }
 
-  // 4. Real Chart.js: Competitive Landscape Scatter Plot (PDF Page 3 & Section 10)
+  // 4. Real Chart.js: Competitive Landscape Scatter Plot
   function renderCompetitiveScatter(competitors) {
     const canvas = document.getElementById('chart-competitive-scatter');
     if (!canvas || !window.Chart) return;
@@ -1509,7 +1509,7 @@ export function initAnalytics(api) {
     `).join('');
   }
 
-  // 8. Real Chart.js: Posts Monthly Timeline (PDF Page 5)
+  // 8. Real Chart.js: Posts Monthly Timeline
   function renderPostsTimelineChart(posts) {
     const canvas = document.getElementById('chart-posts-timeline');
     if (!canvas || !window.Chart) return;
@@ -1594,7 +1594,7 @@ export function initAnalytics(api) {
     });
   }
 
-  // 9. Real Chart.js: Post Themes & CTAs Donut (PDF Page 5)
+  // 9. Real Chart.js: Post Themes & CTAs Donut
   function renderPostThemesChart(posts) {
     const canvas = document.getElementById('chart-post-themes');
     if (!canvas || !window.Chart) return;
@@ -1644,7 +1644,7 @@ export function initAnalytics(api) {
     });
   }
 
-  // 10. Interactive Leaflet Map (PDF Page 5 - Section 13)
+  // 10. Interactive Leaflet Map
   function initOrUpdateGeographicMap(competitors) {
     const mapEl = document.getElementById('geographic-map');
     if (!mapEl || !window.L) return;
@@ -1757,7 +1757,7 @@ export function initAnalytics(api) {
     `;
   }
 
-  // 11. Render Source Explorer (PDF Section 14: Evidence Layer)
+  // 11. Render Source Explorer
   function renderSourceExplorer() {
     if (!sourceTbody) return;
 

@@ -463,7 +463,7 @@ export async function initAPI() {
       return response.json();
     },
 
-    // Analytics & Market Intelligence methods (PDF Spec Compliance)
+    // Analytics & Market Intelligence methods
     getTopicFrequency: async (projectId) => {
       const response = await fetchWithTimeout(`${BASE_URL}/projects/${projectId}/analytics/topics`);
       if (!response.ok) throw new Error('Failed to fetch topic frequency');

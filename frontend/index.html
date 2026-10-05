@@ -235,9 +235,6 @@
                         <div class="flex flex-md:flex-row md:items-center md:justify-between gap-5">
                             <div>
                                 <div class="flex items-center gap-2.5 mb-2">
-                                    <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-terracota-100 text-terracota-600 border border-terracota-200">
-                                        Local SEO Radar
-                                    </span>
                                     <span class="text-xs text-sand-500 font-medium" id="dashboard-last-sync">Saved intelligence</span>
                                 </div>
                                 <h2 class="text-2xl sm:text-3xl font-bold font-serif text-sand-900 tracking-tight" id="dashboard-project-title">
@@ -794,10 +791,10 @@
                 <!-- 4. ANALYTICS VIEW -->
                 <!-- ========================================== -->
                 <!-- ========================================== -->
-                <!-- 4. ANALYTICS & MARKET INTELLIGENCE VIEW (PDF SPEC) -->
+                <!-- 4. ANALYTICS & MARKET INTELLIGENCE VIEW -->
                 <!-- ========================================== -->
                 <section id="analytics-view" class="hidden space-y-6 animate-fade-in">
-                    <!-- Sub-Navigation for the 6 PDF Modules (Touch-friendly & Horizontal Scroll on Phone) -->
+                    <!-- Sub-Navigation (Touch-friendly & Horizontal Scroll on Phone) -->
                     <div class="flex items-center gap-1.5 p-1.5 bg-white border border-[#E8E2D8] rounded-2xl overflow-x-auto touch-scroll scrollbar-none shadow-xs">
                         <button type="button" class="analytics-subnav-btn px-3 py-1.5 rounded-xl text-xs font-semibold bg-sage-500 text-white shrink-0 whitespace-nowrap transition-all flex items-center gap-1.5" data-target="module-overview">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 3v18h18"/><rect width="4" height="7" x="7" y="10" rx="1"/><rect width="4" height="12" x="15" y="5" rx="1"/></svg>
@@ -833,7 +830,7 @@
                         </button>
                     </div>
 
-                    <!-- MODULE 1: MARKET OVERVIEW & KPIS (PDF Page 3 & Section 9) -->
+                    <!-- MODULE 1: MARKET OVERVIEW & KPIS -->
                     <div id="module-overview" class="analytics-module space-y-6">
                         <!-- 4 Merged KPI Cards -->
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -953,13 +950,12 @@
                         </div>
                     </div>
 
-                    <!-- MODULE 2: COMPETITIVE LANDSCAPE SCATTER PLOT (PDF Page 3 & Section 10) -->
+                    <!-- MODULE 2: COMPETITIVE LANDSCAPE SCATTER PLOT -->
                     <div id="module-scatter" class="analytics-module space-y-6 hidden">
                         <div class="earth-card p-5 sm:p-6 space-y-4">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div>
                                     <div class="flex items-center gap-2">
-                                        <span class="badge-terracotta text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Page 3</span>
                                         <h3 class="text-lg font-bold font-serif text-sand-900">Competitive Landscape Scatter Plot</h3>
                                     </div>
                                     <p class="text-xs text-sand-500 mt-0.5">
@@ -981,7 +977,7 @@
                         </div>
                     </div>
 
-                    <!-- MODULE 3: REVIEW INTELLIGENCE (PDF Page 3 & 4 - Section 11) -->
+                    <!-- MODULE 3: REVIEW INTELLIGENCE -->
                     <div id="module-reviews" class="analytics-module space-y-6 hidden">
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <!-- Left: 1-5 Star Rating Distribution -->
@@ -1007,7 +1003,7 @@
                             </div>
                         </div>
 
-                        <!-- Negative Topics & Risk Heatmap (PDF Section 11) -->
+                        <!-- Negative Topics & Risk Heatmap -->
                         <div class="earth-card p-5 sm:p-6 space-y-4">
                             <div class="flex items-center justify-between">
                                 <div>
@@ -1022,7 +1018,7 @@
                         </div>
                     </div>
 
-                    <!-- MODULE 4: POST / CONTENT INTELLIGENCE (PDF Page 5 - Section 12) -->
+                    <!-- MODULE 4: POST / CONTENT INTELLIGENCE -->
                     <div id="module-posts" class="analytics-module space-y-6 hidden">
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                             <!-- Posts Monthly Timeline (8 cols) -->
@@ -1049,13 +1045,12 @@
                         </div>
                     </div>
 
-                    <!-- MODULE 5: GEOGRAPHIC INTELLIGENCE (PDF Page 5 - Section 13) -->
+                    <!-- MODULE 5: GEOGRAPHIC INTELLIGENCE -->
                     <div id="module-geo" class="analytics-module space-y-6 hidden">
                         <div class="earth-card p-5 sm:p-6 space-y-4">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div>
                                     <div class="flex items-center gap-2">
-                                        <span class="badge-sage text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Page 5</span>
                                         <h3 class="text-lg font-bold font-serif text-sand-900">Geographic Intelligence & Location Map</h3>
                                     </div>
                                     <p class="text-xs text-sand-500 mt-0.5">
@@ -1079,13 +1074,12 @@
                         </div>
                     </div>
 
-                    <!-- MODULE 6: SOURCE EXPLORER (PDF Page 5 - 6: The Provenance & Evidence Layer) -->
+                    <!-- MODULE 6: SOURCE EXPLORER -->
                     <div id="module-explorer" class="analytics-module space-y-6 hidden">
                         <div class="earth-card p-5 sm:p-6 space-y-5">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                                 <div>
                                     <div class="flex items-center gap-2 mb-1">
-                                        <span class="badge-terracotta text-xs font-semibold px-2.5 py-0.5 rounded-full">PDF Section 14</span>
                                         <h3 class="text-lg font-bold font-serif text-sand-900">Source Explorer & Evidence Layer</h3>
                                     </div>
                                     <p class="text-xs text-sand-500">
