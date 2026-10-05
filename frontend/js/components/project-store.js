@@ -3,6 +3,37 @@
 
 export const SEED_PROJECTS = [
   {
+    "id": 7,
+    "name": "Brew and Bold Cafe Bandra",
+    "field": "cafe ,food ,cofee ,mocha ,macha",
+    "location": "bandra",
+    "our_profile": "cafe ,stylish ,cozy",
+    "is_online": 0,
+    "competitor_count": 17,
+    "place": {
+      "address": "bandra",
+      "category": null,
+      "cid": null,
+      "confidence": 1,
+      "created_at": "2026-10-04 15:29:25",
+      "google_place_id": null,
+      "hex_id": null,
+      "id": 58,
+      "identity_label": "addr:brew and bold cafe bandra|bandra",
+      "identity_source": "name_address",
+      "kgmid": null,
+      "latitude": null,
+      "longitude": null,
+      "name": "Brew and Bold Cafe Bandra",
+      "place_key": "addr:brew and bold cafe bandra|bandra",
+      "place_url": "https://www.google.com/maps/search/?api=1&query=Brew%20and%20Bold%20Cafe%20Bandra%20bandra",
+      "rating": null,
+      "review_count": null,
+      "updated_at": "2026-10-04 15:29:25"
+    },
+    "gmap_url": null
+  },
+  {
     "id": 11,
     "name": "ZARA ,NEXUS SEAWOODS",
     "field": "fashion,clothing",
@@ -3999,7 +4030,7 @@ export function getStoredActiveProjectId() {
     }
   } catch (e) {}
   const projects = getStoredProjects();
-  return projects[0]?.id || 11;
+  return projects[0]?.id || 7;
 }
 
 export function saveStoredActiveProjectId(projectId) {
